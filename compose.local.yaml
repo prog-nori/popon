@@ -1,0 +1,9 @@
+# VOICEVOXのみDocker、BotはMacのnpm run devで実行。
+# --env-file /dev/null を指定すると .env を読み込まず起動できる。
+services:
+  voicevox:
+    extends:
+      file: compose.voicevox.yaml
+      service: voicevox
+    ports:
+      - "127.0.0.1:50021:50021"

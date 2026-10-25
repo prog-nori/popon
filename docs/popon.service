@@ -1,0 +1,20 @@
+[Unit]
+Description=ぽぽん Discord読み上げBot
+After=network-online.target
+Wants=network-online.target
+[Service]
+Type=simple
+User=popon
+WorkingDirectory=/opt/popon
+EnvironmentFile=/opt/popon/.env
+ExecStart=/usr/bin/node /opt/popon/dist/index.js
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=210
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/popon
+[Install]
+WantedBy=multi-user.target

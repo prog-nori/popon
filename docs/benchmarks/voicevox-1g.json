@@ -1,0 +1,64 @@
+{
+  "image": "sha256:4433ddbb70f697793c28c6c95482492ed4249df4cd9b8654f795bdd818007d61",
+  "memory": "1g",
+  "swap": false,
+  "cpu_limit": 2,
+  "speaker": 3,
+  "tests": [
+    {
+      "index": 0,
+      "label": "warmup",
+      "characters": 6,
+      "query_seconds": 1.435280802892521,
+      "synthesis_seconds": 1.4513475550338626,
+      "total_seconds": 2.8866283579263836,
+      "wav_bytes": 86060,
+      "memory": "/sys/fs/cgroup/memory.current\n229003264\n/sys/fs/cgroup/memory.events\nlow 0\nhigh 0\nmax 0\noom 0\noom_kill 0"
+    },
+    {
+      "index": 1,
+      "label": "short",
+      "characters": 6,
+      "query_seconds": 0.006683002924546599,
+      "synthesis_seconds": 1.3083262420259416,
+      "total_seconds": 1.3150092449504882,
+      "wav_bytes": 86060,
+      "memory": "/sys/fs/cgroup/memory.current\n269443072\n/sys/fs/cgroup/memory.events\nlow 0\nhigh 0\nmax 0\noom 0\noom_kill 0"
+    },
+    {
+      "index": 2,
+      "label": "medium",
+      "characters": 42,
+      "query_seconds": 0.03150357096455991,
+      "synthesis_seconds": 4.41295349993743,
+      "total_seconds": 4.44445707090199,
+      "wav_bytes": 330284,
+      "memory": "/sys/fs/cgroup/memory.current\n369639424\n/sys/fs/cgroup/memory.events\nlow 0\nhigh 0\nmax 0\noom 0\noom_kill 0"
+    }
+  ],
+  "host_config": {
+    "Memory": 1073741824,
+    "MemorySwap": 1073741824,
+    "NanoCpus": 2000000000
+  },
+  "version": "0.26.0",
+  "api_ready_seconds": 2.2326119858771563,
+  "startup_memory": "/sys/fs/cgroup/memory.current\n92078080\n/sys/fs/cgroup/memory.events\nlow 0\nhigh 0\nmax 0\noom 0\noom_kill 0",
+  "first_speech_ready_seconds": 5.289696051971987,
+  "error": "RemoteDisconnected('Remote end closed connection without response')",
+  "final_state": {
+    "Status": "exited",
+    "Running": false,
+    "Paused": false,
+    "Restarting": false,
+    "OOMKilled": true,
+    "Dead": false,
+    "Pid": 0,
+    "ExitCode": 137,
+    "Error": "",
+    "StartedAt": "2026-10-25T11:08:57.517230665Z",
+    "FinishedAt": "2026-10-25T11:09:13.472838724Z"
+  },
+  "final_memory": null,
+  "logs": "reading /home/user/.local/share/voicevox-engine/user.dict_csv-8d1c18cc-3341-4fb8-85f9-b2837f779583.tmp ... 96\nemitting double-array:   1% |                                           | \nemitting double-array:   2% |                                           | \nemitting double-array:   3% |#                                          | \nemitting double-array:   4% |#                                          | \nemitting double-array:   5% |##                                         | \nemitting double-array:   6% |##                                         | \nemitting double-array:   7% |###                                        | \nemitting double-array:   8% |###                                        | \nemitting double-array:   9% |####                                       | \nemitting double-array:  10% |####                                       | \nemitting double-array:  11% |####                                       | \nemitting double-array:  12% |#####                                      | \nemitting double-array:  13% |#####                                      | \nemitting double-array:  14% |######                                     | \nemitting double-array:  15% |######                                     | \nemitting double-array:  16% |#######                                    | \nemitting double-array:  17% |#######                                    | \nemitting double-array:  18% |########                                   | \nemitting double-array:  19% |########                                   | \nemitting double-array:  20% |########                                   | \nemitting double-array:  21% |#########                                  | \nemitting double-array:  22% |#########                                  | \nemitting double-array:  23% |##########                                 | \nemitting double-array:  25% |##########                                 | \nemitting double-array:  26% |###########                                | \nemitting double-array:  27% |###########                                | \nemitting double-array:  28% |############                               | \nemitting double-array:  29% |############                               | \nemitting double-array:  30% |############                               | \nemitting double-array:  31% |#############                              | \nemitting double-array:  32% |#############                              | \nemitting double-array:  33% |##############                             | \nemitting double-array:  34% |##############                             | \nemitting double-array:  35% |###############                            | \nemitting double-array:  36% |###############                            | \nemitting double-array:  37% |################                           | \nemitting double-array:  38% |################                           | \nemitting double-array:  39% |#################                          | \nemitting double-array:  40% |#################                          | \nemitting double-array:  41% |#################                          | \nemitting double-array:  42% |##################                         | \nemitting double-array:  43% |##################                         | \nemitting double-array:  44% |###################                        | \nemitting double-array:  45% |###################                        | \nemitting double-array:  46% |####################                       | \nemitting double-array:  47% |####################                       | \nemitting double-array:  48% |#####################                      | \nemitting double-array:  50% |#####################                      | \nemitting double-array:  51% |#####################                      | \nemitting double-array:  52% |######################                     | \nemitting double-array:  53% |######################                     | \nemitting double-array:  54% |#######################                    | \nemitting double-array:  55% |#######################                    | \nemitting double-array:  56% |########################                   | \nemitting double-array:  57% |########################                   | \nemitting double-array:  58% |#########################                  | \nemitting double-array:  59% |#########################                  | \nemitting double-array:  60% |#########################                  | \nemitting double-array:  61% |##########################                 | \nemitting double-array:  62% |##########################                 | \nemitting double-array:  63% |###########################                | \nemitting double-array:  64% |###########################                | \nemitting double-array:  65% |############################               | \nemitting double-array:  66% |############################               | \nemitting double-array:  67% |#############################              | \nemitting double-array:  68% |#############################              | \nemitting double-array:  69% |##############################             | \nemitting double-array:  70% |##############################             | \nemitting double-array:  71% |##############################             | \nemitting double-array:  72% |###############################            | \nemitting double-array:  73% |###############################            | \nemitting double-array:  75% |################################           | \nemitting double-array:  76% |################################           | \nemitting double-array:  77% |#################################          | \nemitting double-array:  78% |#################################          | \nemitting double-array:  79% |##################################         | \nemitting double-array:  80% |##################################         | \nemitting double-array:  81% |##################################         | \nemitting double-array:  82% |###################################        | \nemitting double-array:  83% |###################################        | \nemitting double-array:  84% |####################################       | \nemitting double-array:  85% |####################################       | \nemitting double-array:  86% |#####################################      | \nemitting double-array:  87% |#####################################      | \nemitting double-array:  88% |######################################     | \nemitting double-array:  89% |######################################     | \nemitting double-array:  90% |######################################     | \nemitting double-array:  91% |#######################################    | \nemitting double-array:  92% |#######################################    | \nemitting double-array:  93% |########################################   | \nemitting double-array:  94% |########################################   | \nemitting double-array:  95% |#########################################  | \nemitting double-array:  96% |#########################################  | \nemitting double-array:  97% |########################################## | \nemitting double-array:  98% |########################################## | \nemitting double-array: 100% |###########################################| \nINFO:     172.17.0.1:55170 - \"GET /version HTTP/1.1\" 200 OK\nINFO:     172.17.0.1:55172 - \"POST /audio_query?text=%E3%81%BD%E3%81%BD%E3%82%93+%E3%82%84%E3%81%82&speaker=3 HTTP/1.1\" 200 OK\nINFO:     172.17.0.1:55174 - \"POST /synthesis?speaker=3 HTTP/1.1\" 200 OK\nINFO:     172.17.0.1:55176 - \"POST /audio_query?text=%E3%81%BD%E3%81%BD%E3%82%93+%E3%82%84%E3%81%82&speaker=3 HTTP/1.1\" 200 OK\nINFO:     172.17.0.1:55178 - \"POST /synthesis?speaker=3 HTTP/1.1\" 200 OK\nINFO:     172.17.0.1:55180 - \"POST /audio_query?text=%E3%81%BD%E3%81%BD%E3%82%93+%E3%81%93%E3%82%93%E3%81%AB%E3%81%A1%E3%81%AF%E3%80%82%E4%BB%8A%E6%97%A5%E3%81%AF%E3%81%BF%E3%82%93%E3%81%AA%E3%81%A7%E3%82%B2%E3%83%BC%E3%83%A0%E3%82%92%E3%81%97%E3%81%BE%E3%81%97%E3%82%87%E3%81%86%E3%80%82%E6%BA%96%E5%82%99%E3%81%8C%E3%81%A7%E3%81%8D%E3%81%9F%E3%82%89%E6%95%99%E3%81%88%E3%81%A6%E3%81%8F%E3%81%A0%E3%81%95%E3%81%84%E3%80%82&speaker=3 HTTP/1.1\" 200 OK\nINFO:     172.17.0.1:55182 - \"POST /synthesis?speaker=3 HTTP/1.1\" 200 OK\nINFO:     172.17.0.1:55186 - \"POST /audio_query?text=%E4%BB%8A%E6%97%A5%E3%81%AF%E3%81%BF%E3%82%93%E3%81%AA%E3%81%A7%E3%82%B2%E3%83%BC%E3%83%A0%E3%82%92%E6%A5%BD%E3%81%97%E3%81%BF%E3%81%BE%E3%81%97%E3%82%87%E3%81%86%E3%80%82%E6%BA%96%E5%82%99%E3%81%8C%E3%81%A7%E3%81%8D%E3%81%9F%E3%82%89%E3%83%9C%E3%82%A4%E3%82%B9%E3%83%81%E3%83%A3%E3%83%83%E3%83%88%E3%81%AB%E5%8F%82%E5%8A%A0%E3%81%97%E3%81%A6%E3%81%8F%E3%81%A0%E3%81%95%E3%81%84%E3%80%82%E4%BB%8A%E6%97%A5%E3%81%AF%E3%81%BF%E3%82%93%E3%81%AA%E3%81%A7%E3%82%B2%E3%83%BC%E3%83%A0%E3%82%92%E6%A5%BD%E3%81%97%E3%81%BF%E3%81%BE%E3%81%97%E3%82%87%E3%81%86%E3%80%82%E6%BA%96%E5%82%99%E3%81%8C%E3%81%A7%E3%81%8D%E3%81%9F%E3%82%89%E3%83%9C%E3%82%A4%E3%82%B9%E3%83%81%E3%83%A3%E3%83%83%E3%83%88%E3%81%AB%E5%8F%82%E5%8A%A0%E3%81%97%E3%81%A6%E3%81%8F%E3%81%A0%E3%81%95%E3%81%84%E3%80%82%E4%BB%8A%E6%97%A5%E3%81%AF%E3%81%BF%E3%82%93%E3%81%AA%E3%81%A7%E3%82%B2%E3%83%BC%E3%83%A0%E3%82%92%E6%A5%BD%E3%81%97%E3%81%BF%E3%81%BE%E3%81%97%E3%82%87%E3%81%86%E3%80%82%E6%BA%96%E5%82%99%E3%81%8C%E3%81%A7%E3%81%8D%E3%81%9F%E3%82%89%E3%83%9C%E3%82%A4%E3%82%B9%E3%83%81%E3%83%A3%E3%83%83%E3%83%88%E3%81%AB%E5%8F%82%E5%8A%A0%E3%81%97%E3%81%A6%E3%81%8F%E3%81%A0%E3%81%95%E3%81%84%E3%80%82%E4%BB%8A%E6%97%A5%E3%81%AF%E3%81%BF%E3%82%93%E3%81%AA%E3%81%A7%E3%82%B2%E3%83%BC%E3%83%A0%E3%82%92%E6%A5%BD%E3%81%97%E3%81%BF%E3%81%BE%E3%81%97%E3%82%87%E3%81%86%E3%80%82%E6%BA%96%E5%82%99%E3%81%8C%E3%81%A7%E3%81%8D%E3%81%9F%E3%82%89%E3%83%9C%E3%82%A4%E3%82%B9%E3%83%81%E3%83%A3%E3%83%83%E3%83%88%E3%81%AB%E5%8F%82%E5%8A%A0%E3%81%97%E3%81%A6%E3%81%8F%E3%81%A0%E3%81%95%E3%81%84%E3%80%82%E4%BB%8A%E6%97%A5%E3%81%AF%E3%81%BF%E3%82%93%E3%81%AA%E3%81%A7%E3%82%B2%E3%83%BC%E3%83%A0%E3%82%92%E6%A5%BD%E3%81%97%E3%81%BF%E3%81%BE%E3%81%97%E3%82%87%E3%81%86%E3%80%82%E6%BA%96%E5%82%99%E3%81%8C%E3%81%A7%E3%81%8D%E3%81%9F%E3%82%89%E3%83%9C%E3%82%A4&speaker=3 HTTP/1.1\" 200 OK"
+}

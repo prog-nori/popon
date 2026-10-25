@@ -1,0 +1,28 @@
+# この構成は手動起動のexternalモード。自動停止運用は docs/operations.md を参照。
+services:
+  voicevox:
+    extends:
+      file: compose.voicevox.yaml
+      service: voicevox
+    networks: [tts]
+  popon:
+    build: .
+    restart: unless-stopped
+    init: true
+    env_file: .env
+    environment:
+      VOICEVOX_URL: http://voicevox:50021
+      TTS_MODE: external
+    networks: [default, tts]
+    depends_on:
+      voicevox:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:3000').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    stop_grace_period: 40s
+networks:
+  tts:
+    internal: true
