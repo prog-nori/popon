@@ -1,5 +1,7 @@
 # VOICEVOXメモリ制限検証（2026-10-25）
 
+[README](../../README.md) · [ローカルでの動作確認](../local-development.md) · [検証記録](../validation.md)
+
 ## 結論
 
 現行の最大200文字を一括合成する仕様では、VOICEVOX用に1GiBを推奨できません。短文は処理できましたが、200文字でOOMKilledとなりました。Botを別VMへ分離しても、このVOICEVOX単体の制限は解消しません。

@@ -207,3 +207,34 @@ describe("TTSライフサイクル", () => {
     await life.stop();
   });
 });
+
+describe("準備中の退出", () => {
+  it("cancels warmup only after the last guild leaves and permits immediate retry", async () => {
+    let signal: AbortSignal | undefined;
+    const provider = {
+      synthesize: vi.fn((_text: string, value?: AbortSignal) => {
+        signal = value;
+        return new Promise<Buffer>(() => {});
+      }),
+    };
+    const engine = {
+      start: vi.fn(async () => {}),
+      stop: vi.fn(async () => {}),
+    };
+    const life = new TTSLifecycleManager(provider, engine, 1000, 180000);
+    const a = life.acquire("a");
+    const b = life.acquire("b");
+    const result = Promise.allSettled([a, b]);
+    await tick();
+    life.release("a");
+    expect(signal?.aborted).toBe(false);
+    life.release("b");
+    expect(signal?.aborted).toBe(true);
+    provider.synthesize.mockResolvedValue(Buffer.from("wav"));
+    await life.acquire("c");
+    expect((await result).every((r) => r.status === "rejected")).toBe(true);
+    expect(life.state).toBe("READY");
+    life.release("c");
+    await life.stop();
+  });
+});

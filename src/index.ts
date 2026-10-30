@@ -15,6 +15,9 @@ import {
 import { config } from "./config.js";
 import { announceReady } from "./readiness.js";
 import { AudioOutput } from "./audio.js";
+import { mediaLink } from "./media/list.js";
+import { MediaQueue } from "./media/queue.js";
+import { YoutubeAdapter, youtubeURL } from "./media/youtube.js";
 import { SpeechQueue } from "./queue.js";
 import { speechText } from "./text.js";
 import { VoicevoxProvider, TTSLifecycleManager, ProcessEngine } from "./tts.js";
@@ -36,7 +39,7 @@ const lifecycle = new TTSLifecycleManager(
   provider,
   config.mode === "process"
     ? new ProcessEngine(config.executable, config.args)
-    : { async start() {}, async stop() {} },
+    : { start: () => provider.checkAvailability(), async stop() {} },
   config.idleMs,
   config.startMs,
 );
@@ -53,7 +56,9 @@ interface Session {
   connection: VoiceConnection;
   audio: AudioOutput;
   queue: SpeechQueue;
+  media: MediaQueue;
   controller: AbortController;
+  ready: boolean;
   idle?: ReturnType<typeof setTimeout>;
 }
 const sessions = new Map<string, Session>();
@@ -62,12 +67,24 @@ function leave(guildId: string): void {
   if (!session) return;
   sessions.delete(guildId);
   clearTimeout(session.idle);
-  session.controller.abort();
-  session.queue.close();
-  session.audio.stop();
-  if (session.connection.state.status !== VoiceConnectionStatus.Destroyed)
-    session.connection.destroy();
-  lifecycle.release(guildId);
+  // One failed cleanup must never prevent disconnecting or releasing TTS.
+  for (const cleanup of [
+    () => session.controller.abort(),
+    () => session.queue.close(),
+    () => session.media.close(),
+    () => session.audio.stop(),
+    () => {
+      if (session.connection.state.status !== VoiceConnectionStatus.Destroyed)
+        session.connection.destroy();
+    },
+    () => lifecycle.release(guildId),
+  ]) {
+    try {
+      cleanup();
+    } catch (error) {
+      log("session_cleanup_error", { guildId, error: errorText(error) });
+    }
+  }
   log("vc_left", { guildId });
 }
 function checkEmpty(guildId: string): void {
@@ -86,10 +103,120 @@ client.on("interactionCreate", (interaction) => {
   void (async () => {
     if (!interaction.isChatInputCommand() || !interaction.inCachedGuild())
       return;
-    if (!["join", "leave"].includes(interaction.commandName)) return;
+    if (
+      ![
+        "join",
+        "leave",
+        "play",
+        "pause",
+        "resume",
+        "skip",
+        "list",
+        "help",
+      ].includes(interaction.commandName)
+    )
+      return;
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    if (interaction.commandName === "help") {
+      await interaction.editReply({
+        embeds: [
+          {
+            title: "ぽぽんのコマンド",
+            description: [
+              "/join: VCに参加してメッセージ読み上げを開始します。",
+              "/leave: VCから退出し、すべての再生と待ちリストを終了します。",
+              "/play <url>: YouTube動画を追加し、順番に音声を再生します。",
+              "/pause: 動画を一時停止します（読み上げは続きます）。",
+              "/resume: 一時停止した動画を再開します。",
+              "/skip: 現在の動画を放棄し、次の動画へ進みます。",
+              "/list: 再生中の動画と再生待ちを最大20件表示します。",
+              "/help: この使い方を表示します。",
+            ].join("\n"),
+            footer: {
+              text: "動画操作は /join 完了後、ぽぽんと同じVCから実行してください。",
+            },
+          },
+        ],
+      });
+      return;
+    }
     const channel = interaction.member.voice.channel;
     const current = sessions.get(interaction.guildId);
+    if (
+      ["play", "pause", "resume", "skip", "list"].includes(
+        interaction.commandName,
+      )
+    ) {
+      if (!current || channel?.id !== current.channelId) {
+        await interaction.editReply(
+          "/join 後、ぽぽんと同じVCから実行してください。",
+        );
+        return;
+      }
+      if (!current.ready) {
+        await interaction.editReply(
+          "まだVC・VOICEVOXの準備中です。/join の準備完了通知後に /play を実行してください。",
+        );
+        return;
+      }
+      if (interaction.commandName === "list") {
+        const state = await current.media.list();
+        await interaction.editReply({
+          embeds: [
+            {
+              title: state.paused ? "動画リスト（一時停止中）" : "動画リスト",
+              description: [
+                state.current
+                  ? `再生中・取得中: ${mediaLink(state.current)}`
+                  : "再生中の動画はありません。",
+                ...state.waiting.map(
+                  (item, i) => `${i + 1}. ${mediaLink(item)}`,
+                ),
+                ...(state.waiting.length ? [] : ["再生待ちはありません。"]),
+              ].join("\n"),
+            },
+          ],
+        });
+        return;
+      }
+      if (interaction.commandName === "pause") {
+        await interaction.editReply(
+          current.media.pause()
+            ? "動画を一時停止しました。読み上げは継続します。"
+            : "再生中の動画がないか、すでに一時停止中です。",
+        );
+        return;
+      }
+      if (interaction.commandName === "resume") {
+        await interaction.editReply(
+          current.media.resume()
+            ? "動画の再生を再開しました。"
+            : "一時停止中の動画はありません。",
+        );
+        return;
+      }
+      if (interaction.commandName === "skip") {
+        await interaction.editReply(
+          current.media.skip()
+            ? "現在の動画をスキップしました。後続の動画があれば再生します。"
+            : "スキップできる動画はありません。",
+        );
+        return;
+      }
+      try {
+        const url = youtubeURL(interaction.options.getString("url", true));
+        const position = current.media.push(url, async (content) => {
+          if (channel?.isTextBased())
+            await channel.send({ content, allowedMentions: { parse: [] } });
+        });
+        await interaction.editReply(
+          `動画を受け付けました（待ち順 ${position}）。再生時に対応可否を確認します。`,
+        );
+      } catch (error) {
+        await interaction.editReply(errorText(error));
+      }
+      return;
+    }
     if (interaction.commandName === "leave") {
       if (current && channel?.id !== current.channelId) {
         await interaction.editReply("ぽぽんと同じVCから実行してください。");
@@ -113,9 +240,6 @@ client.on("interactionCreate", (interaction) => {
       );
       return;
     }
-    await interaction.editReply(
-      "ぽぽんを準備しています。投稿は準備中も受け付けます。",
-    );
     const began = performance.now();
     const connection = joinVoiceChannel({
       channelId: channel.id,
@@ -123,7 +247,26 @@ client.on("interactionCreate", (interaction) => {
       adapterCreator: interaction.guild.voiceAdapterCreator,
       selfDeaf: true,
     });
-    const audio = new AudioOutput(connection);
+    let audio: AudioOutput;
+    try {
+      audio = new AudioOutput(connection, (error) => {
+        log("audio_output_error", { error: errorText(error) });
+        if (sessions.get(interaction.guildId)?.audio === audio)
+          leave(interaction.guildId);
+      });
+    } catch (error) {
+      connection.destroy();
+      log("join_error", { phase: "audio_init", error: errorText(error) });
+      await interaction.editReply(
+        "準備できませんでした。音声出力の初期化に失敗したため退出しました。依存ライブラリとログを確認してください。",
+      );
+      return;
+    }
+    const media = new MediaQueue(
+      new YoutubeAdapter(),
+      (stream, signal, onStart) => audio.playMedia(stream, signal, onStart),
+      (paused) => audio.mixer.setMediaPaused(paused),
+    );
     const controller = new AbortController();
     const queue = new SpeechQueue(async (job, signal) => {
       const text = await speechText(
@@ -152,7 +295,9 @@ client.on("interactionCreate", (interaction) => {
       connection,
       audio,
       queue,
+      media,
       controller,
+      ready: false,
     };
     sessions.set(interaction.guildId, session);
     connection.on(VoiceConnectionStatus.Destroyed, () => {
@@ -179,15 +324,32 @@ client.on("interactionCreate", (interaction) => {
       })();
     });
     try {
+      await interaction.editReply(
+        "ぽぽんを準備しています。投稿は準備中も受け付けます。",
+      );
+      controller.signal.throwIfAborted();
       await announceReady(
         [
-          entersState(connection, VoiceConnectionStatus.Ready, 30000),
+          entersState(
+            connection,
+            VoiceConnectionStatus.Ready,
+            AbortSignal.any([controller.signal, AbortSignal.timeout(30000)]),
+          ).catch((error) => {
+            throw new Error(
+              "VC接続に失敗しました。接続権限・ネットワーク・ログを確認してください。",
+              { cause: error },
+            );
+          }),
           lifecycle.acquire(interaction.guildId),
         ],
         controller.signal,
         () => audio.play(config.sound, controller.signal),
         (e) => log("ready_sound_error", { error: errorText(e) }),
-        () => queue.start(),
+        () => {
+          session.ready = true;
+          queue.start();
+          media.start();
+        },
       );
       checkEmpty(interaction.guildId);
       log("join_ready", {
@@ -198,11 +360,20 @@ client.on("interactionCreate", (interaction) => {
         "準備できました。「表示名 発話内容」の順で読み上げます。",
       );
     } catch (e) {
-      if (sessions.get(interaction.guildId) === session)
-        leave(interaction.guildId);
-      log("join_error", { error: errorText(e) });
+      if (
+        sessions.get(interaction.guildId) !== session ||
+        controller.signal.aborted
+      ) {
+        log("join_cancelled", { guildId: interaction.guildId });
+        await interaction.editReply(
+          "参加準備を中止しました（退出・接続終了）。",
+        );
+        return;
+      }
+      leave(interaction.guildId);
+      log("join_error", { guildId: interaction.guildId, error: errorText(e) });
       await interaction.editReply(
-        "準備できませんでした。設定・VOICEVOXを確認して /join を再実行してください。",
+        `準備できませんでした。VCから退出しました。${errorText(e)} /join を再実行してください。`,
       );
     }
   })().catch((e) => log("interaction_error", { error: errorText(e) }));
