@@ -3,8 +3,17 @@ import { config } from "./config.js";
 if (!config.token || !config.applicationId)
   throw new Error("DISCORD_TOKEN と DISCORD_APPLICATION_ID を設定してください");
 const body = [
+  ...[
+    ["pause", "動画を一時停止します（読み上げは継続）"],
+    ["resume", "動画の再生を再開します"],
+    ["skip", "現在の動画をスキップします"],
+    ["list", "再生中・再生待ちの動画を表示します"],
+    ["help", "コマンドの使い方を表示します"],
+  ].map(([name, description]) =>
+    new SlashCommandBuilder().setName(name!).setDescription(description!),
+  ),
   new SlashCommandBuilder()
-    .setName("add")
+    .setName("play")
     .setDescription("YouTube動画の音声を再生待ちに追加します")
     .addStringOption((option) =>
       option

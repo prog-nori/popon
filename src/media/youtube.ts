@@ -7,6 +7,7 @@ export interface MediaSource {
   stop(): void;
 }
 export interface MediaAdapter {
+  title?(url: string, signal: AbortSignal): Promise<string>;
   open(url: string, signal: AbortSignal): Promise<MediaSource>;
 }
 export function youtubeURL(value: string): string {
@@ -55,6 +56,20 @@ const base = [
   `node:${process.execPath}`,
 ];
 export class YoutubeAdapter implements MediaAdapter {
+  async title(url: string, signal: AbortSignal): Promise<string> {
+    const endpoint = new URL("https://www.youtube.com/oembed");
+    endpoint.searchParams.set("url", youtubeURL(url));
+    endpoint.searchParams.set("format", "json");
+    const response = await fetch(endpoint, {
+      signal: AbortSignal.any([signal, AbortSignal.timeout(8000)]),
+    });
+    if (!response.ok) throw new Error("動画タイトルを取得できませんでした");
+    const data = (await response.json()) as { title?: unknown };
+    if (typeof data.title !== "string" || !data.title.trim())
+      throw new Error("動画タイトルがありません");
+    return data.title;
+  }
+
   async open(url: string, signal: AbortSignal): Promise<MediaSource> {
     url = youtubeURL(url);
     const executable = youtubeExecutable();

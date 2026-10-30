@@ -44,7 +44,11 @@ describe("PCM mix", () => {
       mixer.play("speech", speech, controller.signal).catch(() => {}),
     ];
     speech.write(pcm(1000, 3));
-    const down = Buffer.concat([mixer.render(), mixer.render(), mixer.render()]);
+    const down = Buffer.concat([
+      mixer.render(),
+      mixer.render(),
+      mixer.render(),
+    ]);
     const sample = (buffer: Buffer, n: number) => buffer.readInt16LE(n * 4);
     // At 25% time smoothstep has covered 15.625% of the gain change.
     expect(sample(down, 719)).toBe(2734);
@@ -59,7 +63,9 @@ describe("PCM mix", () => {
     speech.write(pcm(1000));
     const interrupted = mixer.render();
     const recovery = mixer.render();
-    expect(Math.abs(sample(recovery, 0) - (sample(interrupted, 959) - 1000))).toBeLessThanOrEqual(1);
+    expect(
+      Math.abs(sample(recovery, 0) - (sample(interrupted, 959) - 1000)),
+    ).toBeLessThanOrEqual(1);
     mixer.render();
     expect(sample(mixer.render(), 959)).toBe(2000);
     controller.abort();
@@ -321,4 +327,111 @@ it("accepts the reported shared mix URL as a single video", () => {
   expect(
     youtubeURL("https://youtu.be/qP-7GNoDJ5c?list=RDqP-7GNoDJ5c,\u00a0"),
   ).toBe("https://www.youtube.com/watch?v=qP-7GNoDJ5c");
+});
+
+it("pauses media consumption while speech continues, then resumes at the same sample", async () => {
+  const mixer = new Mixer();
+  const media = new PassThrough();
+  media.write(Buffer.concat([pcm(8000), pcm(16000)]));
+  const signal = new AbortController();
+  const jobs = [mixer.play("media", media, signal.signal).catch(() => {})];
+  expect(mixer.render().readInt16LE(0)).toBe(1000);
+  mixer.setMediaPaused(true);
+  jobs.push(
+    mixer.play("speech", input(2000, 1), signal.signal).catch(() => {}),
+  );
+  expect(mixer.render().readInt16LE(0)).toBe(2000);
+  for (let i = 0; i < 1600; i++) mixer.render();
+  expect(media.readableLength).toBe(FRAME_BYTES);
+  mixer.setMediaPaused(false);
+  expect(mixer.render().readInt16LE(0)).toBe(2000);
+  mixer.close();
+  await Promise.all(jobs);
+});
+
+it("skips paused playback, cleans up, and starts the next item without an error notification", async () => {
+  const opened: string[] = [];
+  const stopped: string[] = [];
+  const paused = vi.fn();
+  const notify = vi.fn(async () => {});
+  const queue = new MediaQueue(
+    {
+      async open(url) {
+        opened.push(url);
+        return {
+          stream: new PassThrough(),
+          done: new Promise<void>(() => {}),
+          stop: () => {
+            stopped.push(url);
+          },
+        };
+      },
+    },
+    (_stream, signal) =>
+      new Promise<void>((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(signal.reason), {
+          once: true,
+        });
+      }),
+    paused,
+  );
+  expect(queue.pause()).toBe(false);
+  expect(queue.resume()).toBe(false);
+  expect(queue.skip()).toBe(false);
+  queue.push("one", notify);
+  queue.push("two", notify);
+  queue.start();
+  await tick();
+  expect(queue.pause()).toBe(true);
+  expect(queue.pause()).toBe(false);
+  expect(queue.snapshot()).toEqual({
+    current: "one",
+    paused: true,
+    waiting: ["two"],
+  });
+  expect(queue.resume()).toBe(true);
+  expect(paused).toHaveBeenLastCalledWith(false);
+  queue.pause();
+  expect(queue.skip()).toBe(true);
+  expect(queue.skip()).toBe(false);
+  await tick();
+  expect(opened).toEqual(["one", "two"]);
+  expect(stopped).toEqual(["one"]);
+  expect(queue.snapshot()).toEqual({
+    current: "two",
+    paused: false,
+    waiting: [],
+  });
+  expect(notify).not.toHaveBeenCalled();
+  queue.close();
+  await tick();
+  expect(stopped).toEqual(["one", "two"]);
+});
+
+it("skips acquisition before playback and proceeds to the next item", async () => {
+  const opened: string[] = [];
+  const notify = vi.fn(async () => {});
+  const queue = new MediaQueue(
+    {
+      open(url, signal) {
+        opened.push(url);
+        return new Promise((_resolve, reject) => {
+          signal.addEventListener("abort", () => reject(signal.reason), {
+            once: true,
+          });
+        });
+      },
+    },
+    vi.fn(),
+  );
+  queue.push("one", notify);
+  queue.push("two", notify);
+  queue.start();
+  queue.pause();
+  queue.skip();
+  await tick();
+  expect(opened).toEqual(["one", "two"]);
+  expect(notify).not.toHaveBeenCalled();
+  queue.close();
+  await tick();
 });

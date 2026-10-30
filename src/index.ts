@@ -15,6 +15,7 @@ import {
 import { config } from "./config.js";
 import { announceReady } from "./readiness.js";
 import { AudioOutput } from "./audio.js";
+import { mediaLink } from "./media/list.js";
 import { MediaQueue } from "./media/queue.js";
 import { YoutubeAdapter, youtubeURL } from "./media/youtube.js";
 import { SpeechQueue } from "./queue.js";
@@ -102,11 +103,50 @@ client.on("interactionCreate", (interaction) => {
   void (async () => {
     if (!interaction.isChatInputCommand() || !interaction.inCachedGuild())
       return;
-    if (!["join", "leave", "add"].includes(interaction.commandName)) return;
+    if (
+      ![
+        "join",
+        "leave",
+        "play",
+        "pause",
+        "resume",
+        "skip",
+        "list",
+        "help",
+      ].includes(interaction.commandName)
+    )
+      return;
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    if (interaction.commandName === "help") {
+      await interaction.editReply({
+        embeds: [
+          {
+            title: "ぽぽんのコマンド",
+            description: [
+              "/join: VCに参加してメッセージ読み上げを開始します。",
+              "/leave: VCから退出し、すべての再生と待ちリストを終了します。",
+              "/play <url>: YouTube動画を追加し、順番に音声を再生します。",
+              "/pause: 動画を一時停止します（読み上げは続きます）。",
+              "/resume: 一時停止した動画を再開します。",
+              "/skip: 現在の動画を放棄し、次の動画へ進みます。",
+              "/list: 再生中の動画と再生待ちを最大20件表示します。",
+              "/help: この使い方を表示します。",
+            ].join("\n"),
+            footer: {
+              text: "動画操作は /join 完了後、ぽぽんと同じVCから実行してください。",
+            },
+          },
+        ],
+      });
+      return;
+    }
     const channel = interaction.member.voice.channel;
     const current = sessions.get(interaction.guildId);
-    if (interaction.commandName === "add") {
+    if (
+      ["play", "pause", "resume", "skip", "list"].includes(
+        interaction.commandName,
+      )
+    ) {
       if (!current || channel?.id !== current.channelId) {
         await interaction.editReply(
           "/join 後、ぽぽんと同じVCから実行してください。",
@@ -115,7 +155,51 @@ client.on("interactionCreate", (interaction) => {
       }
       if (!current.ready) {
         await interaction.editReply(
-          "まだVC・VOICEVOXの準備中です。/join の準備完了通知後に /add を実行してください。",
+          "まだVC・VOICEVOXの準備中です。/join の準備完了通知後に /play を実行してください。",
+        );
+        return;
+      }
+      if (interaction.commandName === "list") {
+        const state = await current.media.list();
+        await interaction.editReply({
+          embeds: [
+            {
+              title: state.paused ? "動画リスト（一時停止中）" : "動画リスト",
+              description: [
+                state.current
+                  ? `再生中・取得中: ${mediaLink(state.current)}`
+                  : "再生中の動画はありません。",
+                ...state.waiting.map(
+                  (item, i) => `${i + 1}. ${mediaLink(item)}`,
+                ),
+                ...(state.waiting.length ? [] : ["再生待ちはありません。"]),
+              ].join("\n"),
+            },
+          ],
+        });
+        return;
+      }
+      if (interaction.commandName === "pause") {
+        await interaction.editReply(
+          current.media.pause()
+            ? "動画を一時停止しました。読み上げは継続します。"
+            : "再生中の動画がないか、すでに一時停止中です。",
+        );
+        return;
+      }
+      if (interaction.commandName === "resume") {
+        await interaction.editReply(
+          current.media.resume()
+            ? "動画の再生を再開しました。"
+            : "一時停止中の動画はありません。",
+        );
+        return;
+      }
+      if (interaction.commandName === "skip") {
+        await interaction.editReply(
+          current.media.skip()
+            ? "現在の動画をスキップしました。後続の動画があれば再生します。"
+            : "スキップできる動画はありません。",
         );
         return;
       }
@@ -181,6 +265,7 @@ client.on("interactionCreate", (interaction) => {
     const media = new MediaQueue(
       new YoutubeAdapter(),
       (stream, signal, onStart) => audio.playMedia(stream, signal, onStart),
+      (paused) => audio.mixer.setMediaPaused(paused),
     );
     const controller = new AbortController();
     const queue = new SpeechQueue(async (job, signal) => {

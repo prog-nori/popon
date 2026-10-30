@@ -21,6 +21,7 @@ export class Mixer extends Readable {
   private fences: { frame: number; run: () => void }[] = [];
   private frame = 0;
   private acknowledged = 0;
+  private mediaPaused = false;
   private gain = 1;
   private fadeFrom = 1;
   private fadeTarget = 1;
@@ -85,10 +86,20 @@ export class Mixer extends Readable {
     for (const fence of ready) fence.run();
   }
 
+  setMediaPaused(paused: boolean): void {
+    this.mediaPaused = paused;
+    const track = this.tracks.get("media");
+    if (track) track.lastData = performance.now();
+  }
+
   render(): Buffer {
     const chunks = new Map<Kind, Buffer>();
     this.frame++;
     for (const [kind, track] of this.tracks) {
+      if (kind === "media" && this.mediaPaused) {
+        track.lastData = performance.now();
+        continue;
+      }
       const data = track.source.read(FRAME_BYTES) as Buffer | null;
       if (data?.length) {
         track.lastData = performance.now();

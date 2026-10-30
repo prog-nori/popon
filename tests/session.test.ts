@@ -171,7 +171,7 @@ it("rejects media while TTS initialization is pending", async () => {
   state.acquire.mockReturnValue(new Promise(() => {}));
   state.events.get("interactionCreate")!(interaction("join"));
   await tick();
-  const add = interaction("add");
+  const add = interaction("play");
   state.events.get("interactionCreate")!(add);
   await tick();
   expect(add.editReply).toHaveBeenLastCalledWith(
@@ -229,3 +229,29 @@ it("does not reacquire TTS when leaving before the preparing reply completes", a
     expect.stringContaining("中止"),
   );
 });
+
+it("shows Japanese embed help without joining a voice channel", async () => {
+  const help = interaction("help");
+  state.events.get("interactionCreate")!(help);
+  await tick();
+  expect(help.editReply).toHaveBeenCalledWith({
+    embeds: [
+      expect.objectContaining({
+        description: expect.stringContaining("/play <url>:"),
+      }),
+    ],
+  });
+  expect(state.audioConstruct).not.toHaveBeenCalled();
+});
+
+it.each(["play", "pause", "resume", "skip", "list"])(
+  "requires a joined session for /%s",
+  async (name) => {
+    const command = interaction(name);
+    state.events.get("interactionCreate")!(command);
+    await tick();
+    expect(command.editReply).toHaveBeenCalledWith(
+      expect.stringContaining("同じVC"),
+    );
+  },
+);
