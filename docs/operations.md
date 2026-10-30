@@ -1,10 +1,12 @@
 # 運用・デプロイ
 
+[README](../README.md) · [ローカルでの動作確認](local-development.md) · [設定ガイド](configuration.md)
+
 ## 起動方式の比較
 
 |方式|利点|制約|
 |---|---|---|
-|Mac / LinuxでBotとEngineをローカル実行、processモード|オンデマンド起動・10分後停止、Docker権限不要|Engine実行ファイルをホストに配置|
+|BotとEngineをホスト上で実行、processモード|オンデマンド起動・10分後停止、Docker権限不要|Engine実行ファイルをホストに配置|
 |Compose、externalモード|BotとEngineの環境を分離、起動順とヘルスチェックあり|Engineは常駐。自動停止はしない|
 
 MVPの省資源運用はローカルprocess方式です。Linuxでは専用ユーザーのsystemdサービスでBotを常駐させ、Botの子プロセスとしてEngineを動かします。BotにDockerソケットやsudo権限を付けません。Composeでもオンデマンド制御したい場合は、固定のEngineサービスのみ操作できるホスト管理プロセスを追加する必要があります。この管理APIは現版には実装していません。
@@ -24,7 +26,7 @@ VOICEVOX APIは内部ネットワークだけで公開ポートを持ちませ�
 
 ローカルとサーバーは `compose.voicevox.yaml` の公式CPU版0.26.0 / Ubuntu 24.04と同じmanifest digestを使用します。AMD64・ARM64対応を公式レジストリで確認済みです（2026-10-25）。版の更新はこの共通ファイル1か所で行い、ローカルで再検証してからサーバーへ反映してください。`.env` の `VOICEVOX_IMAGE` による上書きは使用しません。
 
-ローカル手順は[README](../README.md#voicevoxをdockerで動かすサーバーと揃える場合の推奨)を参照してください。本番ComposeはAPIをホストに公開せず、ローカルComposeだけが127.0.0.1:50021に公開します。Botも同じLinuxコンテナで試す場合は上記の本番Compose手順をローカルでも使用できますが、ホストのBotを先に停止し、同じBotトークンで二重起動しないでください。その場合、ComposeはBotに渡すため `.env` を読み込みます。
+ローカル手順は[ローカルでの動作確認](local-development.md)を参照してください。本番ComposeはAPIをホストに公開せず、ローカルComposeだけが127.0.0.1:50021に公開します。Botも同じLinuxコンテナで試す場合は上記の本番Compose手順をローカルでも使用できますが、ホストのBotを先に停止し、同じBotトークンで二重起動しないでください。その場合、ComposeはBotに渡すため `.env` を読み込みます。
 
 以下のsystemd/process手順はDockerを使わない省資源運用の選択肢です。ローカルDockerとのEngine環境の統一を優先する場合は、サーバーでも上記Compose方式を使用してください。
 
@@ -39,7 +41,7 @@ VOICEVOX APIは内部ネットワークだけで公開ポートを持ちませ�
 5. `docs/popon.service` をsystemdのサービス定義として配置。Nodeのインストール先に応じて `ExecStart` を調整します。
 6. `sudo systemctl daemon-reload`、`sudo systemctl enable --now popon`。`journalctl -u popon -f` で起動を確認。
 7. DNS・HTTPS/WSSの外向き通信とDiscord Voice向けUDP送信・応答を、OCIのNSG/セキュリティリストとOSファイアウォールの双方で確認。固定のDiscord IPに決め打ちしません。50021や3000はインターネットへ開けません。
-8. Macと同じ受け入れテストを実施し、DAVE接続・受聴・コールド起動時間・CPU使用状況を記録します。
+8. [ローカルと同じ確認項目](local-development.md#discordでの確認項目)を実施し、DAVE接続・受聴・コールド起動時間・CPU使用状況を記録します。
 
 ## 更新と復旧
 
