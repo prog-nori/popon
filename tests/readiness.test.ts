@@ -68,3 +68,21 @@ describe("join後の準備完了音", () => {
     expect(speech).toHaveBeenCalledOnce();
   });
 });
+
+it("exits immediately when leaving during an unfinished prerequisite", async () => {
+  const controller = new AbortController();
+  const sound = vi.fn(),
+    queue = vi.fn();
+  const pending = announceReady(
+    [new Promise(() => {})],
+    controller.signal,
+    sound,
+    vi.fn(),
+    queue,
+  );
+  const result = expect(pending).rejects.toThrow();
+  controller.abort();
+  await result;
+  expect(sound).not.toHaveBeenCalled();
+  expect(queue).not.toHaveBeenCalled();
+});

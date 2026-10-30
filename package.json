@@ -10,6 +10,7 @@
     "dev": "tsx --env-file=.env src/index.ts",
     "build": "tsc",
     "start": "node --env-file=.env dist/index.js",
+    "setup:media": "python3 scripts/setup-media.py",
     "register": "tsx --env-file=.env src/register.ts",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",

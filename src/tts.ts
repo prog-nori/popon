@@ -1,6 +1,7 @@
 import { dirname } from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";
+import { waitWithAbort } from "./readiness.js";
 import { log, errorText } from "./log.js";
 export interface TTSProvider {
   synthesize(text: string, signal?: AbortSignal): Promise<Buffer>;
@@ -12,6 +13,20 @@ export class VoicevoxProvider implements TTSProvider {
     private speed = 1,
     private volume = 1,
   ) {}
+  async checkAvailability(): Promise<void> {
+    try {
+      const response = await fetch(`${this.url}/version`, {
+        signal: AbortSignal.timeout(5000),
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      await response.body?.cancel();
+    } catch (error) {
+      throw new Error(
+        `VOICEVOXに接続できません。${this.url} のエンジンを起動し、VOICEVOX_URLを確認してください。`,
+        { cause: error },
+      );
+    }
+  }
   async synthesize(text: string, signal?: AbortSignal): Promise<Buffer> {
     const started = performance.now();
     const timeout = AbortSignal.timeout(30000);
@@ -98,6 +113,7 @@ export class TTSLifecycleManager {
   private active = new Set<string>();
   private timer?: ReturnType<typeof setTimeout>;
   private pending?: Promise<void>;
+  private startController?: AbortController;
   private stopping?: Promise<void>;
   constructor(
     private provider: TTSProvider,
@@ -109,16 +125,23 @@ export class TTSLifecycleManager {
     this.active.add(id);
     clearTimeout(this.timer);
     await this.stopping;
+    if (!this.active.has(id)) throw new Error("VOICEVOXの準備を中止しました");
+    if (this.pending && this.startController?.signal.aborted)
+      await this.pending.catch(() => {});
+    if (!this.active.has(id)) throw new Error("VOICEVOXの準備を中止しました");
     if (this.state === "READY") return;
-    if (!this.pending)
-      this.pending = this.start().finally(() => {
+    if (!this.pending) {
+      this.startController = new AbortController();
+      this.pending = this.start(this.startController.signal).finally(() => {
         this.pending = undefined;
       });
+    }
     return this.pending;
   }
   release(id: string): void {
     this.active.delete(id);
     if (!this.active.size) {
+      this.startController?.abort();
       clearTimeout(this.timer);
       this.timer = setTimeout(() => {
         void this.stop().catch((e) =>
@@ -127,21 +150,35 @@ export class TTSLifecycleManager {
       }, this.idleMs);
     }
   }
-  private async start(): Promise<void> {
+  private async start(cancel: AbortSignal): Promise<void> {
     const began = performance.now();
     this.state = "STARTING";
     log("tts_state", { state: this.state });
+    const timeout = AbortSignal.timeout(this.startMs);
+    const signal = AbortSignal.any([cancel, timeout]);
+    let lastError: unknown;
     try {
-      await this.engine.start();
+      await waitWithAbort(this.engine.start(), signal);
       this.state = "WARMING";
-      const signal = AbortSignal.timeout(this.startMs);
+      log("tts_state", { state: this.state });
       while (true) {
         signal.throwIfAborted();
         try {
-          await this.provider.synthesize("準備できました", signal);
+          await waitWithAbort(
+            this.provider.synthesize("準備できました", signal),
+            signal,
+          );
           break;
-        } catch {
-          signal.throwIfAborted();
+        } catch (error) {
+          if (signal.aborted) {
+            if (cancel.aborted) cancel.throwIfAborted();
+            throw new Error(
+              `VOICEVOXの音声合成が準備時間内に完了しませんでした: ${errorText(lastError ?? error)}`,
+              { cause: error },
+            );
+          }
+          if (!lastError) log("tts_warmup_error", { error: errorText(error) });
+          lastError = error;
           await sleep(500, undefined, { signal });
         }
       }
@@ -149,6 +186,11 @@ export class TTSLifecycleManager {
       log("tts_ready", { durationMs: Math.round(performance.now() - began) });
     } catch (e) {
       this.state = "ERROR";
+      if (timeout.aborted && !cancel.aborted)
+        throw new Error(
+          `VOICEVOXの準備が時間内に完了しませんでした: ${errorText(lastError ?? e)}`,
+          { cause: e },
+        );
       throw e;
     }
   }

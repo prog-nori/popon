@@ -40,3 +40,13 @@ describe("VOICEVOX API", () => {
     await engine.stop();
   });
 });
+
+it("explains how to start external VOICEVOX when the endpoint is unavailable", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockRejectedValue(new TypeError("fetch failed")),
+  );
+  await expect(
+    new VoicevoxProvider("http://localhost:50021", 3).checkAvailability(),
+  ).rejects.toThrow("エンジンを起動");
+});

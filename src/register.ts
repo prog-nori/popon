@@ -4,6 +4,15 @@ if (!config.token || !config.applicationId)
   throw new Error("DISCORD_TOKEN と DISCORD_APPLICATION_ID を設定してください");
 const body = [
   new SlashCommandBuilder()
+    .setName("add")
+    .setDescription("YouTube動画の音声を再生待ちに追加します")
+    .addStringOption((option) =>
+      option
+        .setName("url")
+        .setDescription("YouTube動画のURL")
+        .setRequired(true),
+    ),
+  new SlashCommandBuilder()
     .setName("join")
     .setDescription("ぽぽんをVCに呼び、チャットを読み上げます"),
   new SlashCommandBuilder()
