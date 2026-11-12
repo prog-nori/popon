@@ -16,6 +16,9 @@ export class SpeechQueue {
     private process: (job: SpeechJob, signal: AbortSignal) => Promise<void>,
     private limit = 20,
   ) {}
+  get isBusy(): boolean {
+    return this.running || this.jobs.length > 0;
+  }
   push(job: SpeechJob): "accepted" | "duplicate" | "full" | "closed" {
     if (this.controller.signal.aborted) return "closed";
     if (this.seen.has(job.id)) return "duplicate";

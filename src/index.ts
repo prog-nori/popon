@@ -13,6 +13,12 @@ import {
   type VoiceConnection,
 } from "@discordjs/voice";
 import { config } from "./config.js";
+import { commandName, type CommandContext } from "./commands.js";
+import { SQSClient } from "@aws-sdk/client-sqs";
+import { CommandConsumer } from "./sqs.js";
+import { createSqsDispatcher } from "./sqs-dispatch.js";
+import { IdleStopper } from "./idle.js";
+import { serviceScaler, queueAppearsEmpty } from "./aws-service.js";
 import { announceReady } from "./readiness.js";
 import { AudioOutput } from "./audio.js";
 import { mediaLink } from "./media/list.js";
@@ -23,7 +29,7 @@ import { speechText } from "./text.js";
 import { VoicevoxProvider, TTSLifecycleManager, ProcessEngine } from "./tts.js";
 import { log, errorText } from "./log.js";
 import { loginOrShutdown } from "./startup.js";
-if (!config.token) throw new Error("DISCORD_TOKEN を .env に設定してください");
+if (!config.token) throw new Error("DISCORD_TOKEN が環境変数に設定されていません");
 const dictionary = JSON.parse(
   await readFile(config.dictionary, "utf8"),
 ) as Record<string, string>;
@@ -99,26 +105,35 @@ function checkEmpty(guildId: string): void {
   } else if (!session.idle)
     session.idle = setTimeout(() => leave(guildId), config.autoLeaveMs);
 }
-client.on("interactionCreate", (interaction) => {
-  void (async () => {
-    if (!interaction.isChatInputCommand() || !interaction.inCachedGuild())
-      return;
-    if (
-      ![
-        "join",
-        "leave",
-        "play",
-        "pause",
-        "resume",
-        "skip",
-        "list",
-        "help",
-      ].includes(interaction.commandName)
-    )
-      return;
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-    if (interaction.commandName === "help") {
-      await interaction.editReply({
+const preparations = new Set<Promise<void>>();
+let activeCommands = 0;
+let stopping = false;
+let shutdownTask: Promise<void> | undefined;
+let consumer: CommandConsumer | undefined;
+let idle: IdleStopper | undefined;
+
+function trackPreparation(task: Promise<void>): void {
+  preparations.add(task);
+  void task
+    .catch((error) => log("join_background_error", { error: errorText(error) }))
+    .finally(() => preparations.delete(task));
+}
+
+export async function executeCommand(command: CommandContext): Promise<void> {
+  if (stopping) throw new Error("bot_stopping");
+  activeCommands++;
+  idle?.touch();
+  // Notification failures must not roll back a successful music operation.
+  const reply: CommandContext["reply"] = async (message) => {
+    try {
+      return await command.reply(message);
+    } catch {
+      log("command_notification_failed", { guildId: command.guildId });
+    }
+  };
+  try {
+    if (command.name === "help") {
+      await reply({
         embeds: [
           {
             title: "ぽぽんのコマンド",
@@ -129,6 +144,8 @@ client.on("interactionCreate", (interaction) => {
               "/pause: 動画を一時停止します（読み上げは続きます）。",
               "/resume: 一時停止した動画を再開します。",
               "/skip: 現在の動画を放棄し、次の動画へ進みます。",
+              "/stop: 音楽と再生待ちを停止します（読み上げは継続）。",
+              "/queue: /list と同じ再生リストを表示します。",
               "/list: 再生中の動画と再生待ちを最大20件表示します。",
               "/help: この使い方を表示します。",
             ].join("\n"),
@@ -140,28 +157,32 @@ client.on("interactionCreate", (interaction) => {
       });
       return;
     }
-    const channel = interaction.member.voice.channel;
-    const current = sessions.get(interaction.guildId);
+    const channel = command.voiceChannel;
+    const current = sessions.get(command.guildId);
     if (
-      ["play", "pause", "resume", "skip", "list"].includes(
-        interaction.commandName,
-      )
+      ["play", "pause", "resume", "skip", "list", "stop"].includes(command.name)
     ) {
       if (!current || channel?.id !== current.channelId) {
-        await interaction.editReply(
-          "/join 後、ぽぽんと同じVCから実行してください。",
-        );
+        await reply("/join 後、ぽぽんと同じVCから実行してください。");
         return;
       }
       if (!current.ready) {
-        await interaction.editReply(
+        await reply(
           "まだVC・VOICEVOXの準備中です。/join の準備完了通知後に /play を実行してください。",
         );
         return;
       }
-      if (interaction.commandName === "list") {
+      if (command.name === "stop") {
+        await reply(
+          current.media.stop()
+            ? "音楽と再生待ちを停止しました。読み上げは継続します。"
+            : "停止する音楽はありません。",
+        );
+        return;
+      }
+      if (command.name === "list") {
         const state = await current.media.list();
-        await interaction.editReply({
+        await reply({
           embeds: [
             {
               title: state.paused ? "動画リスト（一時停止中）" : "動画リスト",
@@ -179,24 +200,24 @@ client.on("interactionCreate", (interaction) => {
         });
         return;
       }
-      if (interaction.commandName === "pause") {
-        await interaction.editReply(
+      if (command.name === "pause") {
+        await reply(
           current.media.pause()
             ? "動画を一時停止しました。読み上げは継続します。"
             : "再生中の動画がないか、すでに一時停止中です。",
         );
         return;
       }
-      if (interaction.commandName === "resume") {
-        await interaction.editReply(
+      if (command.name === "resume") {
+        await reply(
           current.media.resume()
             ? "動画の再生を再開しました。"
             : "一時停止中の動画はありません。",
         );
         return;
       }
-      if (interaction.commandName === "skip") {
-        await interaction.editReply(
+      if (command.name === "skip") {
+        await reply(
           current.media.skip()
             ? "現在の動画をスキップしました。後続の動画があれば再生します。"
             : "スキップできる動画はありません。",
@@ -204,36 +225,34 @@ client.on("interactionCreate", (interaction) => {
         return;
       }
       try {
-        const url = youtubeURL(interaction.options.getString("url", true));
+        const url = youtubeURL(command.url ?? "");
         const position = current.media.push(url, async (content) => {
           if (channel?.isTextBased())
             await channel.send({ content, allowedMentions: { parse: [] } });
         });
-        await interaction.editReply(
+        await reply(
           `動画を受け付けました（待ち順 ${position}）。再生時に対応可否を確認します。`,
         );
       } catch (error) {
-        await interaction.editReply(errorText(error));
+        await reply(errorText(error));
       }
       return;
     }
-    if (interaction.commandName === "leave") {
+    if (command.name === "leave") {
       if (current && channel?.id !== current.channelId) {
-        await interaction.editReply("ぽぽんと同じVCから実行してください。");
+        await reply("ぽぽんと同じVCから実行してください。");
         return;
       }
-      leave(interaction.guildId);
-      await interaction.editReply("退出しました。");
+      leave(command.guildId);
+      await reply("退出しました。");
       return;
     }
     if (!channel || channel.type !== ChannelType.GuildVoice) {
-      await interaction.editReply(
-        "通常のボイスチャンネルに参加してから呼んでください。",
-      );
+      await reply("通常のボイスチャンネルに参加してから呼んでください。");
       return;
     }
     if (current) {
-      await interaction.editReply(
+      await reply(
         current.channelId === channel.id
           ? "このVCで準備中、または読み上げ中です。"
           : "別のVCで使用中です。先に /leave してください。",
@@ -243,21 +262,21 @@ client.on("interactionCreate", (interaction) => {
     const began = performance.now();
     const connection = joinVoiceChannel({
       channelId: channel.id,
-      guildId: interaction.guildId,
-      adapterCreator: interaction.guild.voiceAdapterCreator,
+      guildId: command.guildId,
+      adapterCreator: command.guild.voiceAdapterCreator,
       selfDeaf: true,
     });
     let audio: AudioOutput;
     try {
       audio = new AudioOutput(connection, (error) => {
         log("audio_output_error", { error: errorText(error) });
-        if (sessions.get(interaction.guildId)?.audio === audio)
-          leave(interaction.guildId);
+        if (sessions.get(command.guildId)?.audio === audio)
+          leave(command.guildId);
       });
     } catch (error) {
       connection.destroy();
       log("join_error", { phase: "audio_init", error: errorText(error) });
-      await interaction.editReply(
+      await reply(
         "準備できませんでした。音声出力の初期化に失敗したため退出しました。依存ライブラリとログを確認してください。",
       );
       return;
@@ -283,7 +302,7 @@ client.on("interactionCreate", (interaction) => {
       const start = performance.now();
       await audio.play(wav, signal, () =>
         log("speech_started", {
-          guildId: interaction.guildId,
+          guildId: command.guildId,
           messageId: job.id,
           postToSpeechMs: Date.now() - job.receivedAt,
         }),
@@ -299,15 +318,13 @@ client.on("interactionCreate", (interaction) => {
       controller,
       ready: false,
     };
-    sessions.set(interaction.guildId, session);
+    sessions.set(command.guildId, session);
     connection.on(VoiceConnectionStatus.Destroyed, () => {
-      if (sessions.get(interaction.guildId) === session)
-        leave(interaction.guildId);
+      if (sessions.get(command.guildId) === session) leave(command.guildId);
     });
     connection.on("error", (e) => {
       log("connection_error", { error: errorText(e) });
-      if (sessions.get(interaction.guildId) === session)
-        leave(interaction.guildId);
+      if (sessions.get(command.guildId) === session) leave(command.guildId);
     });
     connection.on(VoiceConnectionStatus.Disconnected, () => {
       void (async () => {
@@ -318,70 +335,92 @@ client.on("interactionCreate", (interaction) => {
           ]);
           await entersState(connection, VoiceConnectionStatus.Ready, 20000);
         } catch {
-          if (sessions.get(interaction.guildId) === session)
-            leave(interaction.guildId);
+          if (sessions.get(command.guildId) === session) leave(command.guildId);
         }
       })();
     });
-    try {
-      await interaction.editReply(
-        "ぽぽんを準備しています。投稿は準備中も受け付けます。",
-      );
-      controller.signal.throwIfAborted();
-      await announceReady(
-        [
-          entersState(
-            connection,
-            VoiceConnectionStatus.Ready,
-            AbortSignal.any([controller.signal, AbortSignal.timeout(30000)]),
-          ).catch((error) => {
-            throw new Error(
-              "VC接続に失敗しました。接続権限・ネットワーク・ログを確認してください。",
-              { cause: error },
-            );
-          }),
-          lifecycle.acquire(interaction.guildId),
-        ],
-        controller.signal,
-        () => audio.play(config.sound, controller.signal),
-        (e) => log("ready_sound_error", { error: errorText(e) }),
-        () => {
-          session.ready = true;
-          queue.start();
-          media.start();
-        },
-      );
-      checkEmpty(interaction.guildId);
-      log("join_ready", {
-        guildId: interaction.guildId,
-        durationMs: Math.round(performance.now() - began),
-      });
-      await interaction.editReply(
-        "準備できました。「表示名 発話内容」の順で読み上げます。",
-      );
-    } catch (e) {
-      if (
-        sessions.get(interaction.guildId) !== session ||
-        controller.signal.aborted
-      ) {
-        log("join_cancelled", { guildId: interaction.guildId });
-        await interaction.editReply(
-          "参加準備を中止しました（退出・接続終了）。",
+    const prepare = async () => {
+      try {
+        await reply("ぽぽんを準備しています。投稿は準備中も受け付けます。");
+        controller.signal.throwIfAborted();
+        await announceReady(
+          [
+            entersState(
+              connection,
+              VoiceConnectionStatus.Ready,
+              AbortSignal.any([controller.signal, AbortSignal.timeout(30000)]),
+            ).catch((error) => {
+              throw new Error(
+                "VC接続に失敗しました。接続権限・ネットワーク・ログを確認してください。",
+                { cause: error },
+              );
+            }),
+            lifecycle.acquire(command.guildId),
+          ],
+          controller.signal,
+          () => audio.play(config.sound, controller.signal),
+          (e) => log("ready_sound_error", { error: errorText(e) }),
+          () => {
+            session.ready = true;
+            queue.start();
+            media.start();
+          },
         );
-        return;
+        checkEmpty(command.guildId);
+        log("join_ready", {
+          guildId: command.guildId,
+          durationMs: Math.round(performance.now() - began),
+        });
+        await reply("準備できました。「表示名 発話内容」の順で読み上げます。");
+      } catch (e) {
+        if (
+          sessions.get(command.guildId) !== session ||
+          controller.signal.aborted
+        ) {
+          log("join_cancelled", { guildId: command.guildId });
+          await reply("参加準備を中止しました（退出・接続終了）。");
+          return;
+        }
+        leave(command.guildId);
+        log("join_error", { guildId: command.guildId, error: errorText(e) });
+        await reply(
+          `準備できませんでした。VCから退出しました。${errorText(e)} /join を再実行してください。`,
+        );
       }
-      leave(interaction.guildId);
-      log("join_error", { guildId: interaction.guildId, error: errorText(e) });
-      await interaction.editReply(
-        `準備できませんでした。VCから退出しました。${errorText(e)} /join を再実行してください。`,
-      );
-    }
-  })().catch((e) => log("interaction_error", { error: errorText(e) }));
+    };
+    if (command.backgroundJoin) trackPreparation(prepare());
+    else await prepare();
+  } finally {
+    activeCommands--;
+    idle?.touch();
+  }
+}
+
+client.on("interactionCreate", (interaction) => {
+  void (async () => {
+    if (!interaction.isChatInputCommand() || !interaction.inCachedGuild())
+      return;
+    const name = commandName(interaction.commandName);
+    if (!name) return;
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await executeCommand({
+      name,
+      guildId: interaction.guildId,
+      guild: interaction.guild,
+      voiceChannel: interaction.member.voice.channel,
+      url:
+        name === "play"
+          ? interaction.options.getString("url", true)
+          : undefined,
+      reply: (message) => interaction.editReply(message),
+    });
+  })().catch((error) => log("interaction_error", { error: errorText(error) }));
 });
 client.on("messageCreate", (message) => {
   if (message.author.bot || !message.guildId) return;
   const session = sessions.get(message.guildId);
   if (!session || session.channelId !== message.channelId) return;
+  idle?.touch();
   const result = session.queue.push({
     id: message.id,
     name:
@@ -404,17 +443,61 @@ client.on("messageCreate", (message) => {
       .catch((e) => log("notification_error", { error: errorText(e) }));
 });
 client.on("voiceStateUpdate", (_old, state) => checkEmpty(state.guild.id));
-client.once("clientReady", () => log("bot_ready", { name: "ぽぽん" }));
+client.once("clientReady", () => {
+  log("bot_ready", { name: "ぽぽん" });
+  if (!config.sqsQueueUrl || stopping) return;
+  const sqs = new SQSClient({ region: config.awsRegion, maxAttempts: 2 });
+  idle = new IdleStopper({
+    enabled: config.autoStop,
+    coordinated: config.stopCoordinated,
+    idleMs: config.botIdleMs,
+    busy: () =>
+      activeCommands > 0 ||
+      preparations.size > 0 ||
+      !!consumer?.isProcessing ||
+      [...sessions.values()].some(
+        (session) =>
+          !session.ready || session.media.isBusy || session.queue.isBusy,
+      ),
+    queueEmpty: () => queueAppearsEmpty(sqs, config.sqsQueueUrl),
+    scale: serviceScaler(
+      config.awsRegion,
+      config.ecsCluster,
+      config.ecsService,
+    ),
+    // Do not await shutdown from the receive loop: shutdown waits for that loop.
+    stopped: () => {
+      void shutdown().catch(() => log("shutdown_error"));
+    },
+  });
+  consumer = new CommandConsumer(sqs, {
+    queueUrl: config.sqsQueueUrl,
+    ttlMs: config.commandTtlMs,
+    handle: createSqsDispatcher(client, executeCommand),
+    activity: () => idle?.touch(),
+    onEmpty: () => idle!.check(),
+  });
+  void consumer.start().catch(() => log("command_consumer_stopped"));
+});
 client.on("error", (e) => log("client_error", { error: errorText(e) }));
 const health = createServer((_req, res) => {
   res.writeHead(client.isReady() ? 200 : 503);
   res.end(client.isReady() ? "ready" : "starting");
 }).listen(3000, "0.0.0.0");
-async function shutdown() {
+function shutdown(): Promise<void> {
+  if (shutdownTask) return shutdownTask;
+  stopping = true;
+  idle?.close();
+  // Abort sessions before waiting for the consumer/preparations to finish.
   for (const id of sessions.keys()) leave(id);
   client.destroy();
   health.close();
-  await lifecycle.stop();
+  shutdownTask = (async () => {
+    await consumer?.stop();
+    await Promise.allSettled([...preparations]);
+    await lifecycle.stop();
+  })();
+  return shutdownTask;
 }
 for (const signal of ["SIGINT", "SIGTERM"] as const)
   process.once(signal, () => {

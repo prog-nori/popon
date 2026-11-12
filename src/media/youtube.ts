@@ -1,9 +1,11 @@
 import { youtubeExecutable, MediaError } from "./dependencies.js";
 import { command, decode } from "../audio/process.js";
 import type { Readable } from "node:stream";
+import { ProcessFailure } from "../audio/failure.js";
 export interface MediaSource {
   stream: Readable;
   done: Promise<void>;
+  resolveFailure?(error: unknown): Promise<unknown>;
   stop(): void;
 }
 export interface MediaAdapter {
@@ -76,20 +78,51 @@ export class YoutubeAdapter implements MediaAdapter {
     const info = command(
       executable,
       [...base, "--dump-single-json", "--skip-download", "--", youtubeURL(url)],
-      AbortSignal.any([signal, AbortSignal.timeout(30000)]),
+      // JS challenge solving competes with TTS on small Fargate tasks. Local
+      // 0.25-CPU probes exceeded the old 30s bound; keep a bounded 90s budget.
+      AbortSignal.any([signal, AbortSignal.timeout(90000)]),
+      { stage: "metadata", tool: "yt-dlp" },
     );
     info.child.stdin.end();
     let json = "";
+    let tooLarge = false;
     info.child.stdout.on("data", (chunk: Buffer) => {
+      if (tooLarge) return;
       json += chunk.toString();
-      if (json.length > 4 * 1024 * 1024) info.stop();
+      if (json.length > 4 * 1024 * 1024) {
+        tooLarge = true;
+        json = "";
+        info.stop();
+      }
     });
-    await info.done;
-    const metadata = JSON.parse(json) as {
+    await info.done.catch((error: unknown) => {
+      if (tooLarge)
+        throw new ProcessFailure({
+          stage: "metadata",
+          tool: "yt-dlp",
+          classification: "metadata_too_large",
+          exitCode: info.child.exitCode,
+          signal: info.child.signalCode,
+        });
+      throw error;
+    });
+    let metadata: {
       duration?: number;
       live_status?: string;
       availability?: string;
     };
+    try {
+      metadata = JSON.parse(json);
+      if (!metadata || typeof metadata !== "object") throw new Error();
+    } catch {
+      throw new ProcessFailure({
+        stage: "metadata",
+        tool: "yt-dlp",
+        classification: "invalid_metadata",
+        exitCode: 0,
+        signal: null,
+      });
+    }
     if (
       metadata.live_status !== "not_live" ||
       metadata.availability !== "public" ||
@@ -105,6 +138,7 @@ export class YoutubeAdapter implements MediaAdapter {
       executable,
       [...base, "-f", "bestaudio", "-o", "-", "--", url],
       signal,
+      { stage: "download", tool: "yt-dlp" },
     );
     download.child.stdin.end();
     let decoded: ReturnType<typeof decode>;
@@ -117,6 +151,38 @@ export class YoutubeAdapter implements MediaAdapter {
     return {
       stream: decoded.stream,
       done: Promise.all([download.done, decoded.done]).then(() => {}),
+      async resolveFailure(error: unknown) {
+        // A failed download closes FFmpeg's input. Let its close event arrive
+        // before reporting a secondary invalid-input error as the root cause.
+        if (
+          !(error instanceof ProcessFailure) ||
+          error.details.stage !== "decode"
+        )
+          return error;
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+          const upstream = await Promise.race([
+            download.done.then(
+              () => undefined,
+              (failure: unknown) => failure,
+            ),
+            new Promise<undefined>((resolve) => {
+              timer = setTimeout(() => resolve(undefined), 1000);
+            }),
+          ]);
+          return upstream instanceof ProcessFailure &&
+            upstream.details.exitCode !== null &&
+            upstream.details.exitCode !== 0 &&
+            // A decoder failure can itself give yt-dlp a broken pipe. A
+            // generic nonzero exit is insufficient evidence to override it.
+            upstream.details.classification !== "process_exit" &&
+            upstream.details.classification !== "cancelled"
+            ? upstream
+            : error;
+        } finally {
+          clearTimeout(timer);
+        }
+      },
       stop() {
         download.stop();
         decoded.stop();

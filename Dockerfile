@@ -18,4 +18,4 @@ COPY --from=build --chown=node:node /app/dist ./dist
 COPY --chown=node:node package.json ./
 COPY --chown=node:node assets ./assets
 USER node
-CMD ["node", "dist/index.js"]
+CMD ["node", "dist/main.js"]

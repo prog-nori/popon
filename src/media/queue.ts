@@ -3,6 +3,10 @@ import { mediaErrorMessage } from "./dependencies.js";
 import { errorText, log } from "../log.js";
 import type { Readable } from "node:stream";
 import type { MediaAdapter } from "./youtube.js";
+import { randomUUID } from "node:crypto";
+import { failureDetails } from "../audio/failure.js";
+import { MediaError } from "./dependencies.js";
+import { mediaResources } from "./diagnostics.js";
 export interface MediaListItem {
   url: string;
   title?: string;
@@ -27,6 +31,18 @@ export class MediaQueue {
     ) => Promise<void>,
     private setPaused: (paused: boolean) => void = () => {},
   ) {}
+  get isBusy(): boolean {
+    return this.running || !!this.current || this.jobs.length > 0;
+  }
+  /** Stop music only; keep the voice/TTS session available for subsequent /play. */
+  stop(): boolean {
+    const hadMusic = this.isBusy;
+    this.jobs = [];
+    this.current?.controller.abort();
+    this.paused = false;
+    this.setPaused(false);
+    return hadMusic;
+  }
   snapshot(): { current?: string; paused: boolean; waiting: string[] } {
     return {
       current: this.current?.job.url,
@@ -133,6 +149,7 @@ export class MediaQueue {
           AbortSignal.timeout(7500000),
         ]);
         let source: Awaited<ReturnType<MediaAdapter["open"]>> | undefined;
+        const resourcesBefore = mediaResources();
         try {
           log("media_fetching", { url: job.url });
           source = await this.adapter.open(job.url, signal);
@@ -151,10 +168,32 @@ export class MediaQueue {
           log("media_finished", { url: job.url });
         } catch (error) {
           if (!this.controller.signal.aborted && !controller.signal.aborted) {
-            log("media_error", { url: job.url, error: errorText(error) });
+            if (source?.resolveFailure)
+              error = await source.resolveFailure(error);
+            if (this.controller.signal.aborted || controller.signal.aborted)
+              continue;
+            const diagnosticId = randomUUID().slice(0, 8);
+            const detail = failureDetails(
+              error,
+              source ? "playback" : "metadata",
+              signal,
+            );
+            if (error instanceof MediaError)
+              detail.classification = "unsupported_video";
+            const resources = mediaResources();
+            const oomKillDelta =
+              resources.oomKills !== null && resourcesBefore.oomKills !== null
+                ? resources.oomKills - resourcesBefore.oomKills
+                : null;
+            log("media_error", {
+              diagnosticId,
+              ...detail,
+              resources,
+              oomKillDelta,
+            });
             void job
               .notify(
-                `動画を再生できませんでした。${mediaErrorMessage(error)}後続の動画へ進みます。\n${job.url}`,
+                `動画を再生できませんでした。${mediaErrorMessage(error)}後続の動画へ進みます。\n診断: ${diagnosticId} stage=${detail.stage} class=${detail.classification} exit=${detail.exitCode ?? "none"} signal=${detail.signal ?? "none"} oomKills=${oomKillDelta ?? "unknown"}\n${job.url}`,
               )
               .catch((error) =>
                 log("notification_error", { error: errorText(error) }),
@@ -169,8 +208,7 @@ export class MediaQueue {
             source?.stop();
           } catch (error) {
             log("media_cleanup_error", {
-              url: job.url,
-              error: errorText(error),
+              ...failureDetails(error),
             });
           }
         }

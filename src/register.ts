@@ -7,7 +7,9 @@ const body = [
     ["pause", "動画を一時停止します（読み上げは継続）"],
     ["resume", "動画の再生を再開します"],
     ["skip", "現在の動画をスキップします"],
+    ["stop", "音楽と再生待ちを停止します（読み上げは継続）"],
     ["list", "再生中・再生待ちの動画を表示します"],
+    ["queue", "再生中・再生待ちの動画を表示します（listと同じ）"],
     ["help", "コマンドの使い方を表示します"],
   ].map(([name, description]) =>
     new SlashCommandBuilder().setName(name!).setDescription(description!),
