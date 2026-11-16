@@ -9,7 +9,7 @@ import {
 it.each([
   ["ERROR: HTTP Error 403: Forbidden", "http_403"],
   ["HTTP error 429 Too Many Requests", "http_429"],
-  ["Sign in to confirm you're not a bot", "provider_restriction"],
+  ["Sign in to confirm you're not a bot", "provider_bot_check"],
   ["Temporary failure in name resolution", "dns"],
   ["Connection reset by peer", "network"],
   ["The read operation timed out", "timeout"],

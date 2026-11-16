@@ -67,7 +67,7 @@ Dockerの `--cpus` は厳しい上限を課す比較条件であり、CPUを共�
 ```
 
 `media_error` のJSONには同じ照合ID、tool、elapsedMs、メモリ数値も含める。
-stderrは最大4096文字をプロセス内で分類にだけ使い、例外・通知・ログには渡さない。
+stderrは最大4096文字をプロセス内で分類に使い、生の文字列を例外・通知・ログには渡さない。PO Token有効時は別途、固定パターンからProvider認識・Token要求／受領などの真偽値だけを記録する（[ローカルPO Token検証](po-token-local.md)）。
 実行引数、Cookie、トークン、署名付きURL、メタデータJSONも含めない。
 ダウンロード失敗でFFmpegが二次的に失敗した場合は、最大1秒待って判明した上流の分類付き非0終了を優先する。
 分類できない非0終了（FFmpeg停止に伴うbroken pipe等）は、元のデコード失敗を上書きしない。
@@ -77,7 +77,8 @@ stderrは最大4096文字をプロセス内で分類にだけ使い、例外・�
 | --- | --- |
 | metadata / timeout | yt-dlpによる抽出が90秒以内に完了しない。CPU競合、JS challenge、通信遅延を比較 |
 | metadata・download / http_403 | 配信元からの拒否。認証・地域・送信元IP・形式・署名失効等を含み、403だけではどれかを確定できない |
-| provider_restriction | Bot判定・ログイン要求・年齢・地域・公開範囲等の制限を示すエラー |
+| provider_bot_check | `Sign in to confirm / not a bot`。403を伴ってもこの分類を優先 |
+| provider_restriction | その他のログイン要求・年齢・地域・公開範囲等の制限を示すエラー |
 | http_429 | リクエスト数の制限。連打・無限再試行は避ける |
 | dns / network / timeout | DNS名前解決、接続・証明書、時間切れ。実行環境間で比較 |
 | javascript_challenge | Node/EJSの存在・互換性・配信元側の変更を確認 |
@@ -122,7 +123,7 @@ CloudWatchなしでもAWS側の環境で比較できる。既に再生中なら�
 
 - 同じイメージdigest・同じツール版・同じ動画・近い時刻で比較する。ECRタグだけでは実行中タスクの切り替えを保証しない。
 - VOICEVOXとDiscordが動くことは、YouTube・メディアCDNへの通信成功を保証しない。DNS、外向き443、ルート/NATまたはPublic IP、SG/NACL、TLS時刻等を読み取り確認する。
-- `http_403` / `provider_restriction` がAWSだけなら送信元IPや地域・配信元制限が候補。同じコード変更だけで解消するとは限らない。
+- `http_403` / `provider_bot_check` / `provider_restriction` がAWSだけなら送信元IPや地域・配信元制限が候補。同じコード変更だけで解消するとは限らない。
   Cookie・プロキシ・ブラウザ認証の自動追加や制限回避はしていない。
 - メディアURLはyt-dlpがダウンロード時に再取得しており、メモリキューには動画ページURLだけを保持する。
   保存済み署名URLの期限切れはこの実装では考えにくいが、長い一時停止・配信中断・配信元の拒否による403は別途あり得る。

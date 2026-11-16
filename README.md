@@ -29,6 +29,8 @@ DiscordのVC付属チャットを読み上げながら、YouTube動画の音声�
 
 必要なもの：Node.js 22.12以上、FFmpeg、VOICEVOX Engine。動画再生にはPython 3.10以上とyt-dlpも必要です。
 
+PO Token HTTP Providerのローカル比較は[PO Token検証手順](docs/po-token-local.md)を参照してください。既定では無効です。Token受領とYouTube音声取得の成功は別に判定します。
+
 リポジトリのルートで実行します。
 
 ```bash

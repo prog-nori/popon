@@ -11,12 +11,17 @@ export function command(
   executable: string,
   args: string[],
   signal: AbortSignal,
-  context: { stage: MediaStage; tool: "yt-dlp" | "ffmpeg" | "process" } = {
+  context: {
+    stage: MediaStage;
+    tool: "yt-dlp" | "ffmpeg" | "process";
+    observeStderr?: (chunk: string) => void;
+  } = {
     stage: "process",
     tool: "process",
   },
 ) {
   signal.throwIfAborted();
+  const details = { stage: context.stage, tool: context.tool };
   const started = Date.now();
   const child = spawn(executable, args, {
     stdio: ["pipe", "pipe", "pipe"],
@@ -43,7 +48,9 @@ export function command(
     }
   };
   child.stderr.on("data", (chunk: Buffer) => {
-    stderr = (stderr + chunk.toString()).slice(-4096);
+    const text = chunk.toString();
+    stderr = (stderr + text).slice(-4096);
+    context.observeStderr?.(text);
   });
   // Errors are forwarded via completion; stdin EPIPE is covered by exit status.
   child.stdin.on("error", () => {});
@@ -52,7 +59,7 @@ export function command(
     child.once("error", (error: NodeJS.ErrnoException) =>
       reject(
         new ProcessFailure({
-          ...context,
+          ...details,
           exitCode: null,
           signal: null,
           elapsedMs: Date.now() - started,
@@ -73,7 +80,7 @@ export function command(
       else
         reject(
           new ProcessFailure({
-            ...context,
+            ...details,
             exitCode: code,
             signal: terminationSignal,
             elapsedMs: Date.now() - started,

@@ -29,7 +29,10 @@ import { speechText } from "./text.js";
 import { VoicevoxProvider, TTSLifecycleManager, ProcessEngine } from "./tts.js";
 import { log, errorText } from "./log.js";
 import { loginOrShutdown } from "./startup.js";
-if (!config.token) throw new Error("DISCORD_TOKEN が環境変数に設定されていません");
+import { poTokenOptions } from "./media/po-token.js";
+log("youtube_pot_mode", { enabled: poTokenOptions().enabled });
+if (!config.token)
+  throw new Error("DISCORD_TOKEN が環境変数に設定されていません");
 const dictionary = JSON.parse(
   await readFile(config.dictionary, "utf8"),
 ) as Record<string, string>;

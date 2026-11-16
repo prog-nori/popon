@@ -2,6 +2,7 @@ import { EventEmitter } from "node:events";
 import type { Client } from "discord.js";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createSqsDispatcher } from "../src/sqs-dispatch.js";
+import { log } from "../src/log.js";
 const state = vi.hoisted(() => ({
   events: new Map<string, (...args: unknown[]) => void>(),
   audioConstruct: vi.fn(),
@@ -136,7 +137,20 @@ afterEach(async () => {
   for (const [name, previous] of oldListeners)
     for (const listener of process.listeners(name))
       if (!previous.includes(listener)) process.removeListener(name, listener);
+  vi.unstubAllEnvs();
 });
+it.each(["false", "true"])(
+  "initializes the Bot with PO enabled=%s (Discord login mocked)",
+  async (enabled) => {
+    vi.stubEnv("YOUTUBE_POT_ENABLED", enabled);
+    vi.resetModules();
+    await import("../src/index.js");
+    expect(log).toHaveBeenCalledWith("youtube_pot_mode", {
+      enabled: enabled === "true",
+    });
+    expect(state.events.has("interactionCreate")).toBe(true);
+  },
+);
 it("rolls back the VC when audio initialization fails", async () => {
   state.audioConstruct.mockImplementation(() => {
     throw new Error("encoder unavailable");
