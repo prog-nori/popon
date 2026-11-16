@@ -102,6 +102,8 @@ export function poTokenObserver(stage: "metadata" | "download") {
   let plugin = false;
   let requested = false;
   let received = false;
+  let playerRequested = false;
+  let playerReceived = false;
   let generationFailed = false;
   let tokenOnGvsRequest = false;
   function line(text: string) {
@@ -110,6 +112,10 @@ export function poTokenObserver(stage: "metadata" | "download") {
     if (/Generating a gvs PO Token .*via bgutil HTTP server/i.test(text))
       requested = true;
     if (/Retrieved a gvs PO Token for mweb client/i.test(text)) received = true;
+    if (/Generating a player PO Token .*via bgutil HTTP server/i.test(text))
+      playerRequested = true;
+    if (/Retrieved a player PO Token for mweb client/i.test(text))
+      playerReceived = true;
     if (/Error fetching PO Token|Error reaching POST \/get_pot/i.test(text))
       generationFailed = true;
     if (/Invoking .*downloader on/.test(text) && /[?&/]pot[=/]/.test(text))
@@ -131,6 +137,8 @@ export function poTokenObserver(stage: "metadata" | "download") {
         pluginRecognized: plugin,
         gvsTokenRequested: requested,
         gvsTokenReceived: received,
+        playerTokenRequested: playerRequested,
+        playerTokenReceived: playerReceived,
         generationFailed,
         tokenOnGvsRequest,
       });

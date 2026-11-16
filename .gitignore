@@ -8,3 +8,7 @@ coverage/
 .DS_Store
 
 .tools/
+# Never commit exported browser cookies or local authentication files.
+cookies.txt
+*cookies*.txt
+*cookies*.json

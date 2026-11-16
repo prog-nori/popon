@@ -142,6 +142,8 @@ it("observes requested/received GVS tokens and usage without returning raw logs"
     pluginRecognized: true,
     gvsTokenRequested: true,
     gvsTokenReceived: true,
+    playerTokenRequested: false,
+    playerTokenReceived: false,
     generationFailed: false,
     tokenOnGvsRequest: true,
   });
@@ -161,6 +163,24 @@ it("does not turn a generation attempt or plugin load into token/access success"
       gvsTokenRequested: true,
       gvsTokenReceived: false,
       generationFailed: true,
+    }),
+  );
+  expect(JSON.stringify(vi.mocked(log).mock.calls)).not.toContain("secret");
+});
+
+it("observes Player token receipt separately from GVS tokens without exposing values", () => {
+  const observer = poTokenObserver("metadata");
+  observer.consume(
+    "Generating a player PO Token for mweb client via bgutil HTTP server\nRetrieved a player PO Token for mweb client\nToken: secret\n",
+  );
+  observer.finish(true);
+  expect(log).toHaveBeenLastCalledWith(
+    "youtube_pot_result",
+    expect.objectContaining({
+      playerTokenRequested: true,
+      playerTokenReceived: true,
+      gvsTokenRequested: false,
+      gvsTokenReceived: false,
     }),
   );
   expect(JSON.stringify(vi.mocked(log).mock.calls)).not.toContain("secret");

@@ -30,7 +30,9 @@ import { VoicevoxProvider, TTSLifecycleManager, ProcessEngine } from "./tts.js";
 import { log, errorText } from "./log.js";
 import { loginOrShutdown } from "./startup.js";
 import { poTokenOptions } from "./media/po-token.js";
+import { youtubeCookieOptions, youtubeCookies } from "./media/cookies.js";
 log("youtube_pot_mode", { enabled: poTokenOptions().enabled });
+log("youtube_cookie_mode", { enabled: youtubeCookieOptions().enabled });
 if (!config.token)
   throw new Error("DISCORD_TOKEN が環境変数に設定されていません");
 const dictionary = JSON.parse(
@@ -498,7 +500,7 @@ function shutdown(): Promise<void> {
   shutdownTask = (async () => {
     await consumer?.stop();
     await Promise.allSettled([...preparations]);
-    await lifecycle.stop();
+    await Promise.all([lifecycle.stop(), youtubeCookies.close()]);
   })();
   return shutdownTask;
 }

@@ -6,3 +6,8 @@ dist
 coverage
 
 .tools
+cookies.txt
+*cookies*.txt
+*cookies*.json
+**/*cookies*.txt
+**/*cookies*.json
