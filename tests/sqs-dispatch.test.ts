@@ -38,8 +38,22 @@ it("resolves the user's Gateway voice state independently of the notification ch
     expect.objectContaining({
       voiceChannel: f.vc,
       guild: f.guild,
+      userId: command.userId,
+      expiresAt: command.createdAt * 1000 + 300000,
       backgroundJoin: true,
     }),
+  );
+});
+it("propagates a configured TTL for the post-preparation play deadline", async () => {
+  const f = fixture();
+  const execute = vi.fn(async () => {});
+  await createSqsDispatcher(
+    f.client as unknown as Client,
+    execute,
+    600000,
+  )({ ...command, name: "play", url: "https://youtu.be/abcdefghijk" });
+  expect(execute).toHaveBeenCalledWith(
+    expect.objectContaining({ expiresAt: command.createdAt * 1000 + 600000 }),
   );
 });
 it("uses null when the user is no longer in voice, without guessing a VC", async () => {

@@ -27,8 +27,10 @@ export const config = {
     process.env.AWS_DEFAULT_REGION ??
     "ap-northeast-1",
   commandTtlMs: number("COMMAND_TTL_MS", 300000, 1000),
+  // Legacy settings retained for compatibility; they no longer govern stopping.
   botIdleMs: number("BOT_IDLE_MS", 300000, 1000),
   autoStop: process.env.AUTO_STOP_ENABLED === "true",
+  autoStopIdleMs: number("AUTO_STOP_IDLE_MS", 60000, 1000),
   stopCoordinated: process.env.AUTO_STOP_COORDINATED === "true",
   ecsCluster: process.env.ECS_CLUSTER ?? "",
   ecsService: process.env.ECS_SERVICE ?? "",

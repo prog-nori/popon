@@ -8,6 +8,9 @@ import {
 } from "@aws-sdk/client-sqs";
 import { InvalidCommand } from "../src/commands.js";
 import { CommandConsumer } from "../src/sqs.js";
+import { log } from "../src/log.js";
+
+vi.mock("../src/log.js", () => ({ log: vi.fn() }));
 
 const now = 1800000000000;
 const message = (): Message => ({
@@ -39,7 +42,10 @@ function fixture(handle = vi.fn(async () => {})) {
   });
   return { consumer, send, handle };
 }
-afterEach(() => vi.useRealTimers());
+afterEach(() => {
+  vi.useRealTimers();
+  vi.clearAllMocks();
+});
 
 it("deletes only after acceptance and never repeats a command after delete fails", async () => {
   const { consumer, send, handle } = fixture();
@@ -51,11 +57,67 @@ it("deletes only after acceptance and never repeats a command after delete fails
     return {};
   });
   await expect(consumer.process(message())).rejects.toThrow("delete failed");
+  expect(consumer.hasUnacknowledged).toBe(true);
+  expect(consumer.hasUnacknowledged).toBe(true);
+  expect(log).toHaveBeenCalledWith("command_delete_failed", { id: "123" });
   await consumer.process({ ...message(), ReceiptHandle: "new-receipt" });
+  expect(consumer.hasUnacknowledged).toBe(false);
+  expect(consumer.hasUnacknowledged).toBe(false);
+  expect(log).toHaveBeenCalledWith("command_duplicate", { id: "123" });
   expect(handle).toHaveBeenCalledOnce();
   expect(send.mock.lastCall?.[0]).toMatchObject({
     input: { ReceiptHandle: "new-receipt" },
   });
+});
+
+it("keeps a message marked unacknowledged until DeleteMessage has completed", async () => {
+  const { consumer, send } = fixture();
+  let finish!: () => void;
+  send.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        finish = () => resolve({});
+      }),
+  );
+  const pending = consumer.process(message());
+  await vi.waitFor(() => expect(send).toHaveBeenCalledOnce());
+  expect(consumer.isProcessing).toBe(true);
+  expect(consumer.hasUnacknowledged).toBe(true);
+  finish();
+  await pending;
+  expect(consumer.isProcessing).toBe(false);
+  expect(consumer.hasUnacknowledged).toBe(false);
+});
+
+it("bounds transient command retries by TTL and never logs the payload or exception details", async () => {
+  let time = now;
+  const handle = vi.fn(async () => {
+    throw new Error("secret-token-and-signed-url");
+  });
+  const send = vi.fn(async () => ({}));
+  const consumer = new CommandConsumer({ send } as unknown as SQSClient, {
+    queueUrl: "queue-url",
+    ttlMs: 300000,
+    now: () => time,
+    handle,
+  });
+  await expect(consumer.process(message())).rejects.toThrow();
+  expect(send).not.toHaveBeenCalled();
+  expect(log).toHaveBeenCalledWith("command_retry_pending", {
+    id: "123",
+    guildId: "456",
+    command: "join",
+  });
+  time += 300000;
+  await consumer.process(message());
+  expect(handle).toHaveBeenCalledOnce();
+  expect(send.mock.lastCall?.[0]).toBeInstanceOf(DeleteMessageCommand);
+  expect(log).toHaveBeenCalledWith("command_discarded", {
+    reason: "expired_command",
+  });
+  expect(JSON.stringify(vi.mocked(log).mock.calls)).not.toContain(
+    "secret-token-and-signed-url",
+  );
 });
 
 it("keeps transient execution failures available for redelivery", async () => {
@@ -83,6 +145,22 @@ it("discards poison, stale and mismatched-group messages without executing them"
   });
   expect(handle).not.toHaveBeenCalled();
   expect(send).toHaveBeenCalledTimes(3);
+});
+
+it("does not execute an expired cold-start play request", async () => {
+  const { consumer, send, handle } = fixture();
+  const data = JSON.parse(message().Body!);
+  data.command = "play";
+  data.options = [
+    { name: "url", type: 3, value: "https://youtu.be/abcdefghijk" },
+  ];
+  data.created_at -= 301;
+  await consumer.process({ ...message(), Body: JSON.stringify(data) });
+  expect(handle).not.toHaveBeenCalled();
+  expect(send.mock.lastCall?.[0]).toBeInstanceOf(DeleteMessageCommand);
+  expect(log).toHaveBeenCalledWith("command_discarded", {
+    reason: "expired_command",
+  });
 });
 
 it("acknowledges permanent rejections but leaves no-success-on-error ambiguity", async () => {

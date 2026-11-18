@@ -1,97 +1,132 @@
-import { expect, it, vi } from "vitest";
-import { IdleStopper } from "../src/idle.js";
-
-function fixture(coordinated = true) {
-  let now = 0;
-  let busy = false;
-  const scale = vi.fn(async (count: number) => {
-    void count;
-  });
+import { afterEach, expect, it, vi } from "vitest";
+import { AutoStopper } from "../src/idle.js";
+import { log } from "../src/log.js";
+vi.mock("../src/log.js", () => ({ log: vi.fn() }));
+afterEach(() => vi.clearAllMocks());
+function fixture(enabled = true) {
+  let safe = true;
+  let valid = true;
+  const stop = vi.fn(async () => {});
   const queueEmpty = vi.fn(async () => true);
-  const stopped = vi.fn();
-  const idle = new IdleStopper({
-    enabled: true,
-    coordinated,
-    idleMs: 300000,
-    now: () => now,
-    busy: () => busy,
-    scale,
+  const control = new AutoStopper({
+    enabled,
+    safe: () => safe,
     queueEmpty,
-    stopped,
+    stop,
   });
+  control.request("leave", "guild", () => valid);
   return {
-    idle,
-    scale,
+    control,
+    stop,
     queueEmpty,
-    stopped,
-    time: (value: number) => {
-      now = value;
+    busy: () => {
+      safe = false;
     },
-    busy: (value: boolean) => {
-      busy = value;
+    invalidate: () => {
+      valid = false;
     },
   };
 }
-
-it("refuses scale-in without external coordination", async () => {
+it("requests stop only after local and queue evidence, with no scale-up or process exit", async () => {
+  const f = fixture();
+  expect(f.stop).not.toHaveBeenCalled();
+  await f.control.check();
+  expect(f.stop).toHaveBeenCalledOnce();
+  expect(f.control.isStopping).toBe(true);
+  expect(log).toHaveBeenCalledWith("auto_stop_requested", {
+    reason: "leave",
+    guildId: "guild",
+  });
+  await f.control.check();
+  expect(f.stop).toHaveBeenCalledOnce();
+});
+it("preserves existing operation when automatic stop is disabled", async () => {
   const f = fixture(false);
-  f.time(900000);
-  await f.idle.check();
+  await f.control.check();
+  expect(f.stop).not.toHaveBeenCalled();
   expect(f.queueEmpty).not.toHaveBeenCalled();
-  expect(f.scale).not.toHaveBeenCalled();
 });
-it("waits five full minutes after playback/paused music/speech/preparation becomes idle", async () => {
+it("blocks for other sessions, unacknowledged messages, preparation or unavailable Gateway", async () => {
   const f = fixture();
-  f.busy(true);
-  f.time(300000);
-  await f.idle.check();
-  f.busy(false);
-  f.time(320000);
-  await f.idle.check();
-  f.time(619999);
-  await f.idle.check();
-  expect(f.scale).not.toHaveBeenCalled();
-  f.time(620000);
-  await f.idle.check();
-  expect(f.scale).toHaveBeenCalledExactlyOnceWith(0);
-  expect(f.stopped).toHaveBeenCalledOnce();
+  f.busy();
+  await f.control.check();
+  expect(f.queueEmpty).not.toHaveBeenCalled();
+  expect(f.stop).not.toHaveBeenCalled();
 });
-it("cancels a pending stop if a command arrives during the queue check", async () => {
+it("blocks a queued command even if local processing has completed", async () => {
   const f = fixture();
-  f.time(300000);
+  f.queueEmpty.mockResolvedValue(false);
+  await f.control.check();
+  expect(f.stop).not.toHaveBeenCalled();
+});
+it("cancels a /join arriving during the pre-stop queue check", async () => {
+  const f = fixture();
   f.queueEmpty.mockImplementation(async () => {
-    f.idle.touch();
+    f.control.cancel("sqs_command_received");
     return true;
   });
-  await f.idle.check();
-  expect(f.scale).not.toHaveBeenCalled();
+  await f.control.check();
+  expect(f.stop).not.toHaveBeenCalled();
 });
-it("restores desiredCount=1 if activity arrives during scale-in", async () => {
+it("rechecks local state after the remote queue lookup", async () => {
   const f = fixture();
-  f.time(300000);
-  f.scale.mockImplementation(async (count) => {
-    if (count === 0) f.idle.touch();
+  f.queueEmpty.mockImplementation(async () => {
+    f.busy();
+    return true;
   });
-  await f.idle.check();
-  expect(f.scale.mock.calls.map(([count]) => count)).toEqual([0, 1]);
-  expect(f.stopped).not.toHaveBeenCalled();
+  await f.control.check();
+  expect(f.stop).not.toHaveBeenCalled();
 });
-it("does not stop on nonempty or unreadable queues", async () => {
+it("does not pretend a request already sent to ECS can be cancelled atomically", async () => {
   const f = fixture();
-  f.time(300000);
-  f.queueEmpty.mockResolvedValue(false);
-  await f.idle.check();
-  expect(f.scale).not.toHaveBeenCalled();
-  f.time(600000);
-  f.queueEmpty.mockRejectedValue(new Error("denied"));
-  await f.idle.check();
-  expect(f.scale).not.toHaveBeenCalled();
+  f.stop.mockImplementation(async () => {
+    f.control.cancel("new_start_after_api_sent");
+  });
+  await f.control.check();
+  expect(f.stop).toHaveBeenCalledOnce();
+  expect(f.control.isStopping).toBe(true);
+  expect(log).toHaveBeenCalledWith(
+    "auto_stop_cancelled",
+    expect.objectContaining({ requestInFlight: true }),
+  );
 });
-it("keeps running and restores service after an uncertain scale-in failure", async () => {
+it("cancels when a human returns after the VC-empty timeout", async () => {
   const f = fixture();
-  f.time(300000);
-  f.scale.mockRejectedValueOnce(new Error("network timeout"));
-  await f.idle.check();
-  expect(f.scale.mock.calls.map(([count]) => count)).toEqual([0, 1]);
-  expect(f.stopped).not.toHaveBeenCalled();
+  f.invalidate();
+  f.control.revalidate();
+  await f.control.check();
+  expect(f.stop).not.toHaveBeenCalled();
+});
+it.each(["queue", "update"])(
+  "keeps the process running and does not repeatedly retry a failed %s API",
+  async (stage) => {
+    const f = fixture();
+    if (stage === "queue")
+      f.queueEmpty.mockRejectedValue(new Error("sensitive details"));
+    else f.stop.mockRejectedValue(new Error("AccessDenied"));
+    await f.control.check();
+    await f.control.check();
+    expect(f.control.isStopping).toBe(false);
+    expect(f.queueEmpty).toHaveBeenCalledOnce();
+    expect(log).toHaveBeenCalledWith("auto_stop_failed", {
+      reason: "leave",
+      guildId: "guild",
+    });
+    expect(JSON.stringify(vi.mocked(log).mock.calls)).not.toContain(
+      "sensitive details",
+    );
+  },
+);
+it("reports the unavoidable race after UpdateService was already sent without issuing desiredCount=1", async () => {
+  const f = fixture();
+  f.stop.mockImplementation(async () => {
+    f.control.cancel("new_command");
+  });
+  await f.control.check();
+  expect(f.stop).toHaveBeenCalledOnce();
+  expect(f.control.isStopping).toBe(true);
+  expect(log).toHaveBeenCalledWith(
+    "auto_stop_cancelled",
+    expect.objectContaining({ requestInFlight: true }),
+  );
 });
