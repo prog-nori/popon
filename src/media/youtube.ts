@@ -16,6 +16,7 @@ import {
   type YoutubeCookieLease,
 } from "./cookies.js";
 export interface MediaSource {
+  metadata?: { id: string; title: string; duration: number; url: string };
   stream: Readable;
   done: Promise<void>;
   resolveFailure?(error: unknown): Promise<unknown>;

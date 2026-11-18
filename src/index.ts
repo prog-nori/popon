@@ -24,7 +24,7 @@ import { announceReady } from "./readiness.js";
 import { AudioOutput } from "./audio.js";
 import { mediaLink } from "./media/list.js";
 import { MediaQueue } from "./media/queue.js";
-import { YoutubeAdapter, youtubeURL } from "./media/youtube.js";
+import { VideoAdapter, mediaURL } from "./media/router.js";
 import { SpeechQueue } from "./queue.js";
 import { speechText } from "./text.js";
 import { VoicevoxProvider, TTSLifecycleManager, ProcessEngine } from "./tts.js";
@@ -185,7 +185,7 @@ export async function executeCommand(command: CommandContext): Promise<void> {
             description: [
               "/join: VCに参加してメッセージ読み上げを開始します。",
               "/leave: VCから退出し、すべての再生と待ちリストを終了します。",
-              "/play <url>: YouTube動画を追加し、順番に音声を再生します。",
+              "/play <url>: YouTube・ニコニコ動画を追加し、順番に音声を再生します。",
               "/pause: 動画を一時停止します（読み上げは続きます）。",
               "/resume: 一時停止した動画を再開します。",
               "/skip: 現在の動画を放棄し、次の動画へ進みます。",
@@ -219,7 +219,7 @@ export async function executeCommand(command: CommandContext): Promise<void> {
       }
       // Validate before connecting; retain the existing URL parser and playback.
       try {
-        youtubeURL(command.url ?? "");
+        mediaURL(command.url ?? "");
       } catch (error) {
         await reply(errorText(error));
         return;
@@ -323,7 +323,7 @@ export async function executeCommand(command: CommandContext): Promise<void> {
         return;
       }
       try {
-        const url = youtubeURL(command.url ?? "");
+        const url = mediaURL(command.url ?? "");
         const position = current.media.push(url, async (content) => {
           if (channel?.isTextBased())
             await channel.send({ content, allowedMentions: { parse: [] } });
@@ -404,7 +404,7 @@ export async function executeCommand(command: CommandContext): Promise<void> {
       return;
     }
     const media = new MediaQueue(
-      new YoutubeAdapter(),
+      new VideoAdapter(),
       (stream, signal, onStart) => audio.playMedia(stream, signal, onStart),
       (paused) => audio.mixer.setMediaPaused(paused),
     );

@@ -339,6 +339,34 @@ it("auto-joins and starts the existing MediaQueue playback after readiness", asy
   await consumer.stop();
 });
 
+it("auto-joins for Niconico SQS play and uses the same playback and acknowledgement", async () => {
+  const f = queuedFixture();
+  const { consumer, send } = await queuedConsumer();
+  const { NiconicoAdapter } = await import("../src/media/niconico.js");
+  const { YoutubeAdapter } = await import("../src/media/youtube.js");
+  const youtube = vi.spyOn(YoutubeAdapter.prototype, "open");
+  const url = "https://www.nicovideo.jp/watch/sm12345678";
+  const open = vi.spyOn(NiconicoAdapter.prototype, "open").mockResolvedValue({
+    stream: Readable.from([Buffer.alloc(3840)]),
+    metadata: { id: "sm12345678", title: "ニコニコの曲", duration: 120, url },
+    done: Promise.resolve(),
+    stop() {},
+  });
+  const message = f.message("123", "play");
+  const body = JSON.parse(message.Body!);
+  body.options[0].value = "https://nico.ms/sm12345678?from=foo";
+  message.Body = JSON.stringify(body);
+  await consumer.process(message);
+  await vi.waitFor(() => expect(state.playMedia).toHaveBeenCalledOnce());
+  expect(open).toHaveBeenCalledExactlyOnceWith(url, expect.any(AbortSignal));
+  expect(youtube).not.toHaveBeenCalled();
+  expect(state.joinVoice).toHaveBeenCalledOnce();
+  expect(send.mock.lastCall?.[0]).toBeInstanceOf(DeleteMessageCommand);
+  await consumer.process(message);
+  expect(open).toHaveBeenCalledOnce();
+  await consumer.stop();
+});
+
 it("does not join or queue SQS play when the user has no voice state", async () => {
   const f = queuedFixture();
   f.voiceStates.clear();

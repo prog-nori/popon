@@ -16,11 +16,11 @@ const body = [
   ),
   new SlashCommandBuilder()
     .setName("play")
-    .setDescription("YouTube動画の音声を再生待ちに追加します")
+    .setDescription("YouTube・ニコニコ動画の音声を再生待ちに追加します")
     .addStringOption((option) =>
       option
         .setName("url")
-        .setDescription("YouTube動画のURL")
+        .setDescription("YouTube・ニコニコ動画のURL")
         .setRequired(true),
     ),
   new SlashCommandBuilder()

@@ -98,6 +98,46 @@ it("cancels metadata requests on session closure", async () => {
   expect((await listing).waiting).toEqual([]);
 });
 
+it.each(["stop", "skip"] as const)(
+  "%s cancels the removed track's metadata subprocess signal",
+  async (action) => {
+    let titleSignal!: AbortSignal;
+    const { Readable } = await import("node:stream");
+    const queue = new MediaQueue(
+      {
+        open: async () => ({
+          stream: new Readable({ read() {} }),
+          done: Promise.resolve(),
+          stop() {},
+        }),
+        title: (_url, signal) => {
+          titleSignal = signal;
+          return new Promise((_resolve, reject) =>
+            signal.addEventListener("abort", () => reject(signal.reason), {
+              once: true,
+            }),
+          );
+        },
+      },
+      (_stream, signal) =>
+        new Promise((_resolve, reject) =>
+          signal.addEventListener("abort", () => reject(signal.reason), {
+            once: true,
+          }),
+        ),
+    );
+    queue.push(url, async () => {});
+    queue.start();
+    await vi.waitFor(() => expect(queue.snapshot().current).toBe(url));
+    const listing = queue.list();
+    queue[action]();
+    expect(titleSignal.aborted).toBe(true);
+    await listing;
+    await vi.waitFor(() => expect(queue.isBusy).toBe(false));
+    queue.close();
+  },
+);
+
 it("escapes title Markdown and bounds a full list below the embed limit", () => {
   expect(mediaLink({ url, title: "曲 [live] *new*\n版" })).toBe(
     `[曲 \\[live\\] \\*new\\* 版](<${url}>)`,

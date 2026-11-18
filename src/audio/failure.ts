@@ -36,6 +36,7 @@ export type FailureClass =
   | "format_unavailable"
   | "invalid_media"
   | "invalid_metadata"
+  | "media_unavailable"
   | "metadata_too_large"
   | "unsupported_video"
   | "killed"

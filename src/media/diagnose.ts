@@ -1,4 +1,5 @@
-import { YoutubeAdapter, youtubeURL, type MediaSource } from "./youtube.js";
+import type { MediaSource } from "./youtube.js";
+import { VideoAdapter, mediaURL } from "./router.js";
 import { mediaResources, mediaTools } from "./diagnostics.js";
 import { failureDetails } from "../audio/failure.js";
 import { MediaError } from "./dependencies.js";
@@ -8,7 +9,7 @@ import { youtubeCookies } from "./cookies.js";
 async function main() {
   let url: string;
   try {
-    url = youtubeURL(process.argv[2] || "");
+    url = mediaURL(process.argv[2] || "");
   } catch {
     console.log(
       JSON.stringify({ ok: false, classification: "invalid_video_url" }),
@@ -17,6 +18,7 @@ async function main() {
     return;
   }
   const controller = new AbortController();
+  const niconico = new URL(url).hostname === "www.nicovideo.jp";
   const signal = AbortSignal.any([
     controller.signal,
     AbortSignal.timeout(180000),
@@ -25,7 +27,9 @@ async function main() {
   console.log(
     JSON.stringify({
       event: "media_probe_start",
-      videoId: new URL(url).searchParams.get("v"),
+      videoId: niconico
+        ? new URL(url).pathname.split("/").at(-1)
+        : new URL(url).searchParams.get("v"),
       tools: mediaTools(),
       resources: before,
     }),
@@ -35,14 +39,16 @@ async function main() {
   let pcmBytes = 0;
   let sampleComplete = false;
   try {
-    source = await new YoutubeAdapter().open(url, signal);
+    source = await new VideoAdapter().open(url, signal);
     // Consume at playback speed with bounded buffers; sample 10 seconds of PCM.
     const sample = (async () => {
       for await (const chunk of source!.stream) {
         if (!pcmBytes)
           console.log(
             JSON.stringify({
-              event: "youtube_media_result",
+              event: niconico
+                ? "niconico_media_result"
+                : "youtube_media_result",
               stage: "decode",
               state: "first_pcm",
             }),

@@ -10,9 +10,12 @@ import { mediaResources } from "./diagnostics.js";
 export interface MediaListItem {
   url: string;
   title?: string;
+  id?: string;
+  duration?: number;
 }
 interface Job extends MediaListItem {
   titleRequest?: Promise<void>;
+  titleController?: AbortController;
   notify: (message: string) => Promise<unknown>;
 }
 export class MediaQueue {
@@ -37,6 +40,11 @@ export class MediaQueue {
   /** Stop music only; keep the voice/TTS session available for subsequent /play. */
   stop(): boolean {
     const hadMusic = this.isBusy;
+    for (const job of [
+      ...this.jobs,
+      ...(this.current ? [this.current.job] : []),
+    ])
+      job.titleController?.abort();
     this.jobs = [];
     this.current?.controller.abort();
     this.paused = false;
@@ -61,14 +69,22 @@ export class MediaQueue {
       jobs.map((job) => {
         if (job.title || !this.adapter.title) return;
         if (!job.titleRequest) {
+          job.titleController = new AbortController();
           job.titleRequest = this.adapter
-            .title(job.url, this.controller.signal)
+            .title(
+              job.url,
+              AbortSignal.any([
+                this.controller.signal,
+                job.titleController.signal,
+              ]),
+            )
             .then((title) => {
               job.title = title;
             })
             .catch(() => {})
             .finally(() => {
               job.titleRequest = undefined;
+              job.titleController = undefined;
             });
         }
         return job.titleRequest;
@@ -77,6 +93,7 @@ export class MediaQueue {
     const item = (job: Job): MediaListItem => ({
       url: job.url,
       title: job.title,
+      ...(job.id !== undefined ? { id: job.id, duration: job.duration } : {}),
     });
     // Playback can advance while metadata is loading; show the latest queue.
     return {
@@ -101,6 +118,7 @@ export class MediaQueue {
   skip(): boolean {
     if (!this.current || this.current.controller.signal.aborted) return false;
     this.current.controller.abort();
+    this.current.job.titleController?.abort();
     this.paused = false;
     this.setPaused(false);
     return true;
@@ -153,6 +171,7 @@ export class MediaQueue {
         try {
           log("media_fetching", { url: job.url });
           source = await this.adapter.open(job.url, signal);
+          if (source.metadata) Object.assign(job, source.metadata);
           const stream = source.stream;
           const playback = Promise.resolve().then(() =>
             this.play(stream, signal, () =>
@@ -200,6 +219,7 @@ export class MediaQueue {
               );
           }
         } finally {
+          job.titleController?.abort();
           this.current = undefined;
           this.paused = false;
           this.setPaused(false);
