@@ -1,7 +1,14 @@
 import { youtubeExecutable, MediaError } from "./dependencies.js";
 import { command, decode } from "../audio/process.js";
 import type { Readable } from "node:stream";
-import { ProcessFailure } from "../audio/failure.js";
+import { failureDetails, ProcessFailure } from "../audio/failure.js";
+import { log } from "../log.js";
+import {
+  checkPoTokenProvider,
+  poTokenArgs,
+  poTokenObserver,
+  poTokenOptions,
+} from "./po-token.js";
 export interface MediaSource {
   stream: Readable;
   done: Promise<void>;
@@ -74,14 +81,28 @@ export class YoutubeAdapter implements MediaAdapter {
 
   async open(url: string, signal: AbortSignal): Promise<MediaSource> {
     url = youtubeURL(url);
+    const pot = poTokenOptions();
+    log("youtube_pot_mode", { enabled: pot.enabled });
+    if (pot.enabled) await checkPoTokenProvider(pot, signal);
+    const args = [
+      ...base.filter((arg) => !pot.enabled || arg !== "--no-warnings"),
+      ...poTokenArgs(pot),
+    ];
+    const metadataObservation = pot.enabled
+      ? poTokenObserver("metadata")
+      : undefined;
     const executable = youtubeExecutable();
     const info = command(
       executable,
-      [...base, "--dump-single-json", "--skip-download", "--", youtubeURL(url)],
+      [...args, "--dump-single-json", "--skip-download", "--", youtubeURL(url)],
       // JS challenge solving competes with TTS on small Fargate tasks. Local
       // 0.25-CPU probes exceeded the old 30s bound; keep a bounded 90s budget.
       AbortSignal.any([signal, AbortSignal.timeout(90000)]),
-      { stage: "metadata", tool: "yt-dlp" },
+      {
+        stage: "metadata",
+        tool: "yt-dlp",
+        observeStderr: metadataObservation?.consume,
+      },
     );
     info.child.stdin.end();
     let json = "";
@@ -96,6 +117,11 @@ export class YoutubeAdapter implements MediaAdapter {
       }
     });
     await info.done.catch((error: unknown) => {
+      metadataObservation?.finish(false);
+      log("youtube_media_result", {
+        ...failureDetails(error, "metadata", signal),
+        ok: false,
+      });
       if (tooLarge)
         throw new ProcessFailure({
           stage: "metadata",
@@ -106,6 +132,8 @@ export class YoutubeAdapter implements MediaAdapter {
         });
       throw error;
     });
+    metadataObservation?.finish(true);
+    metadataObservation?.assertPlugin();
     let metadata: {
       duration?: number;
       live_status?: string;
@@ -134,20 +162,51 @@ export class YoutubeAdapter implements MediaAdapter {
         "通常の公開動画（2時間以内）のみ対応しています。ライブ・制限付き動画は再生できません。",
       );
     signal.throwIfAborted();
+    log("youtube_media_result", { stage: "metadata", ok: true });
+    const downloadObservation = pot.enabled
+      ? poTokenObserver("download")
+      : undefined;
     const download = command(
       executable,
-      [...base, "-f", "bestaudio", "-o", "-", "--", url],
+      [...args, "-f", "bestaudio", "-o", "-", "--", url],
       signal,
-      { stage: "download", tool: "yt-dlp" },
+      {
+        stage: "download",
+        tool: "yt-dlp",
+        observeStderr: downloadObservation?.consume,
+      },
     );
     download.child.stdin.end();
     let decoded: ReturnType<typeof decode>;
     try {
       decoded = decode(download.child.stdout, signal);
+      // decode() has already attached the stream pipe; this listener observes
+      // the first bytes without consuming or bypassing the PCM/backpressure path.
+      download.child.stdout.once("data", () =>
+        log("youtube_media_result", {
+          stage: "download",
+          state: "first_bytes",
+        }),
+      );
     } catch (error) {
       download.stop();
       throw error;
     }
+    void download.done.then(
+      () => {
+        downloadObservation?.finish(true);
+        log("youtube_media_result", { stage: "download", ok: true });
+      },
+      (error: unknown) => {
+        downloadObservation?.finish(false);
+        const details = failureDetails(error, "download", signal);
+        log("youtube_media_result", {
+          ...details,
+          state:
+            details.classification === "cancelled" ? "cancelled" : "failed",
+        });
+      },
+    );
     return {
       stream: decoded.stream,
       done: Promise.all([download.done, decoded.done]).then(() => {}),

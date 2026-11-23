@@ -10,15 +10,20 @@ if sys.version_info < (3, 10):
     for name in ["python3.14", "python3.13", "python3.12", "python3.11", "python3.10", "/usr/local/bin/python3", "/opt/homebrew/bin/python3"]:
         candidate = shutil.which(name)
         if candidate and subprocess.run([candidate, "-c", "import sys; sys.exit(sys.version_info < (3,10))"], capture_output=True).returncode == 0:
-            sys.exit(subprocess.call([candidate, __file__]))
+            sys.exit(subprocess.call([candidate, __file__, *sys.argv[1:]]))
     sys.exit("Python 3.10以上を導入し、npm run setup:media を再実行してください。")
 
 root = Path(__file__).resolve().parent.parent
+pot = sys.argv[1:] == ["--po-token"]
+if sys.argv[1:] and not pot:
+    sys.exit("Usage: setup-media.py [--po-token]")
 environment = root / ".tools" / "media"
 subprocess.run([sys.executable, "-m", "venv", "--clear", str(environment)], check=True)
 python = environment / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
 subprocess.run(
-    [str(python), "-m", "pip", "install", "--upgrade", "--no-cache-dir", "yt-dlp[default]>=2025.11.12"],
+    [str(python), "-m", "pip", "install", "--upgrade", "--no-cache-dir",
+     *( ["yt-dlp[default]==2026.10.26", "bgutil-ytdlp-pot-provider==2.0.2"] if pot
+        else ["yt-dlp[default]>=2025.11.12"] )],
     check=True,
 )
 subprocess.run([str(python), "-m", "yt_dlp", "--version"], check=True)

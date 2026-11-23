@@ -10,6 +10,12 @@ export type FailureClass =
   | "timeout"
   | "cancelled"
   | "provider_restriction"
+  | "provider_bot_check"
+  | "pot_configuration"
+  | "pot_provider_unavailable"
+  | "pot_version_mismatch"
+  | "pot_plugin_missing"
+  | "pot_generation_failed"
   | "javascript_challenge"
   | "format_unavailable"
   | "invalid_media"
@@ -38,6 +44,9 @@ export class ProcessFailure extends Error {
 }
 
 export function classifyProcessFailure(stderr: string): FailureClass {
+  if (/not a bot|sign in to confirm/i.test(stderr)) return "provider_bot_check";
+  if (/Error fetching PO Token|Error reaching POST \/get_pot/i.test(stderr))
+    return "pot_generation_failed";
   if (
     /HTTP (?:Error |error |status(?: code)?[: ]*)?403|403 Forbidden/i.test(
       stderr,
@@ -51,7 +60,7 @@ export function classifyProcessFailure(stderr: string): FailureClass {
   )
     return "http_429";
   if (
-    /not a bot|sign in to confirm|login required|private video|age.restricted|not available in your country|geo.restrict|members.only/i.test(
+    /login required|private video|age.restricted|not available in your country|geo.restrict|members.only/i.test(
       stderr,
     )
   )
