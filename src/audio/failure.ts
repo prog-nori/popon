@@ -1,5 +1,5 @@
 export type MediaStage =
-  "process" | "metadata" | "download" | "decode" | "playback";
+  "process" | "cookies" | "metadata" | "download" | "decode" | "playback";
 export type FailureClass =
   | "missing_executable"
   | "permission_denied"
@@ -16,6 +16,22 @@ export type FailureClass =
   | "pot_version_mismatch"
   | "pot_plugin_missing"
   | "pot_generation_failed"
+  | "cookie_configuration"
+  | "cookie_secret_not_string"
+  | "cookie_empty"
+  | "cookie_format_invalid"
+  | "cookie_secret_access_denied"
+  | "cookie_secret_not_found"
+  | "cookie_secret_decryption"
+  | "cookie_secret_credentials"
+  | "cookie_secret_throttled"
+  | "cookie_secret_timeout"
+  | "cookie_secret_network"
+  | "cookie_secret_unavailable"
+  | "cookie_file_io"
+  | "cookie_store_closed"
+  | "cookie_load_failed"
+  | "youtube_login_required"
   | "javascript_challenge"
   | "format_unavailable"
   | "invalid_media"
@@ -27,7 +43,7 @@ export type FailureClass =
   | "unknown";
 export interface FailureDetails {
   stage: MediaStage;
-  tool: "yt-dlp" | "ffmpeg" | "process";
+  tool: "yt-dlp" | "ffmpeg" | "process" | "secrets-manager";
   classification: FailureClass;
   exitCode: number | null;
   signal: NodeJS.Signals | null;
@@ -45,6 +61,13 @@ export class ProcessFailure extends Error {
 
 export function classifyProcessFailure(stderr: string): FailureClass {
   if (/not a bot|sign in to confirm/i.test(stderr)) return "provider_bot_check";
+  if (/LOGIN_REQUIRED/.test(stderr)) return "youtube_login_required";
+  if (
+    /failed to load cookies|does not look like a Netscape format cookies file/i.test(
+      stderr,
+    )
+  )
+    return "cookie_load_failed";
   if (/Error fetching PO Token|Error reaching POST \/get_pot/i.test(stderr))
     return "pot_generation_failed";
   if (

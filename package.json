@@ -20,6 +20,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-ecs": "^3.1161.0",
+    "@aws-sdk/client-secrets-manager": "^3.1161.0",
     "@aws-sdk/client-sqs": "^3.1161.0",
     "@discordjs/voice": "0.19.2",
     "cheerio": "1.1.2",

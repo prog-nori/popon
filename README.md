@@ -31,6 +31,8 @@ DiscordのVC付属チャットを読み上げながら、YouTube動画の音声�
 
 PO Token HTTP Providerのローカル比較は[PO Token検証手順](docs/po-token-local.md)を参照してください。既定では無効です。Token受領とYouTube音声取得の成功は別に判定します。
 
+YouTubeログインCookieの任意利用は[Secrets Manager連携](docs/youtube-cookies.md)を参照してください。Cookie実値を環境変数・イメージ・リポジトリへ入れず、タスクロールで初回取得します。既定OFFで、Cookie読込とYouTubeによるログイン受理は別に判定します。
+
 リポジトリのルートで実行します。
 
 ```bash

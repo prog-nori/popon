@@ -2,8 +2,9 @@ import { YoutubeAdapter, youtubeURL, type MediaSource } from "./youtube.js";
 import { mediaResources, mediaTools } from "./diagnostics.js";
 import { failureDetails } from "../audio/failure.js";
 import { MediaError } from "./dependencies.js";
+import { youtubeCookies } from "./cookies.js";
 
-// Runs without Discord/AWS credentials. No config/.env loading or raw stderr.
+// No config/.env loading or raw stderr. Cookies ON uses the task role; OFF needs no AWS access.
 async function main() {
   let url: string;
   try {
@@ -38,6 +39,14 @@ async function main() {
     // Consume at playback speed with bounded buffers; sample 10 seconds of PCM.
     const sample = (async () => {
       for await (const chunk of source!.stream) {
+        if (!pcmBytes)
+          console.log(
+            JSON.stringify({
+              event: "youtube_media_result",
+              stage: "decode",
+              state: "first_pcm",
+            }),
+          );
         pcmBytes += (chunk as Buffer).length;
         if (pcmBytes >= 48000 * 2 * 2 * 10) {
           sampleComplete = true;
@@ -88,6 +97,7 @@ async function main() {
   } finally {
     controller.abort();
     source?.stop();
+    await youtubeCookies.close();
   }
 }
 await main();

@@ -9,6 +9,12 @@ import {
   poTokenObserver,
   poTokenOptions,
 } from "./po-token.js";
+import {
+  youtubeCookies,
+  youtubeCookieOptions,
+  youtubeCookieObserver,
+  type YoutubeCookieLease,
+} from "./cookies.js";
 export interface MediaSource {
   stream: Readable;
   done: Promise<void>;
@@ -81,15 +87,42 @@ export class YoutubeAdapter implements MediaAdapter {
 
   async open(url: string, signal: AbortSignal): Promise<MediaSource> {
     url = youtubeURL(url);
+    const options = youtubeCookieOptions();
+    log("youtube_cookie_mode", { enabled: options.enabled });
+    // Keep the OFF path free of extra awaits/AWS calls.
+    const cookie = options.enabled
+      ? await youtubeCookies.acquire(options, signal)
+      : undefined;
+    try {
+      return await this.openWithCookies(url, signal, cookie);
+    } catch (error) {
+      await cookie?.release();
+      throw error;
+    }
+  }
+
+  private async openWithCookies(
+    url: string,
+    signal: AbortSignal,
+    cookie?: YoutubeCookieLease,
+  ): Promise<MediaSource> {
     const pot = poTokenOptions();
     log("youtube_pot_mode", { enabled: pot.enabled });
     if (pot.enabled) await checkPoTokenProvider(pot, signal);
     const args = [
-      ...base.filter((arg) => !pot.enabled || arg !== "--no-warnings"),
+      ...base.filter(
+        (arg) => !(pot.enabled || cookie) || arg !== "--no-warnings",
+      ),
       ...poTokenArgs(pot),
+      ...(cookie
+        ? ["--cookies", cookie.path, ...(!pot.enabled ? ["--verbose"] : [])]
+        : []),
     ];
     const metadataObservation = pot.enabled
       ? poTokenObserver("metadata")
+      : undefined;
+    const metadataCookies = cookie
+      ? youtubeCookieObserver("metadata")
       : undefined;
     const executable = youtubeExecutable();
     const info = command(
@@ -101,9 +134,13 @@ export class YoutubeAdapter implements MediaAdapter {
       {
         stage: "metadata",
         tool: "yt-dlp",
-        observeStderr: metadataObservation?.consume,
+        observeStderr: (chunk) => {
+          metadataObservation?.consume(chunk);
+          metadataCookies?.consume(chunk);
+        },
       },
     );
+    cookie?.holdUntil(info.done);
     info.child.stdin.end();
     let json = "";
     let tooLarge = false;
@@ -118,6 +155,10 @@ export class YoutubeAdapter implements MediaAdapter {
     });
     await info.done.catch((error: unknown) => {
       metadataObservation?.finish(false);
+      metadataCookies?.finish(
+        "failed",
+        failureDetails(error, "metadata", signal).classification,
+      );
       log("youtube_media_result", {
         ...failureDetails(error, "metadata", signal),
         ok: false,
@@ -163,8 +204,12 @@ export class YoutubeAdapter implements MediaAdapter {
       );
     signal.throwIfAborted();
     log("youtube_media_result", { stage: "metadata", ok: true });
+    metadataCookies?.finish("metadata_ok");
     const downloadObservation = pot.enabled
       ? poTokenObserver("download")
+      : undefined;
+    const downloadCookies = cookie
+      ? youtubeCookieObserver("download")
       : undefined;
     const download = command(
       executable,
@@ -173,9 +218,13 @@ export class YoutubeAdapter implements MediaAdapter {
       {
         stage: "download",
         tool: "yt-dlp",
-        observeStderr: downloadObservation?.consume,
+        observeStderr: (chunk) => {
+          downloadObservation?.consume(chunk);
+          downloadCookies?.consume(chunk);
+        },
       },
     );
+    cookie?.holdUntil(download.done);
     download.child.stdin.end();
     let decoded: ReturnType<typeof decode>;
     try {
@@ -192,14 +241,25 @@ export class YoutubeAdapter implements MediaAdapter {
       download.stop();
       throw error;
     }
+    // Independent jars per open(); metadata and download share only their own jar.
+    // Wait for both subprocesses to exit before removing it, including cancellation.
+    const cookieCleanup = Promise.allSettled([
+      download.done,
+      decoded.done,
+    ]).then(() => cookie?.release());
     void download.done.then(
       () => {
         downloadObservation?.finish(true);
+        downloadCookies?.finish("completed");
         log("youtube_media_result", { stage: "download", ok: true });
       },
       (error: unknown) => {
         downloadObservation?.finish(false);
         const details = failureDetails(error, "download", signal);
+        downloadCookies?.finish(
+          details.classification === "cancelled" ? "cancelled" : "failed",
+          details.classification,
+        );
         log("youtube_media_result", {
           ...details,
           state:
@@ -209,7 +269,9 @@ export class YoutubeAdapter implements MediaAdapter {
     );
     return {
       stream: decoded.stream,
-      done: Promise.all([download.done, decoded.done]).then(() => {}),
+      done: Promise.all([download.done, decoded.done]).then(async () => {
+        await cookieCleanup;
+      }),
       async resolveFailure(error: unknown) {
         // A failed download closes FFmpeg's input. Let its close event arrive
         // before reporting a secondary invalid-input error as the root cause.

@@ -1,5 +1,7 @@
 # Fargateでの音声取得・デコード診断
 
+2026-11-16追加: [YouTube Cookie / Secrets Manager連携](youtube-cookies.md)。以下の旧検証はCookieなしの記録です。現在の診断はCookie OFFなら従来どおりAWS認証なし、ONならタスクロールでSecretを取得します。CloudWatchは必須にしません。
+
 ## 調査結果（2026-11-04）
 
 対象は `https://www.youtube.com/watch?v=ez8Uv-pi0Jg`。AWSリソースは変更せず、`.env`・Cookie・Discord/AWS認証情報は使用していない。

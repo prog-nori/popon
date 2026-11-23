@@ -66,8 +66,12 @@ it.each([false, true])(
     expect(calls[1]![1]).toEqual(
       expect.arrayContaining(["-f", "bestaudio", "-o", "-"]),
     );
-    expect(calls[0]![1].includes("youtube:player_client=mweb;fetch_pot=always")).toBe(enabled);
-    expect(calls[1]![1].includes("youtube:player_client=mweb;fetch_pot=always")).toBe(enabled);
+    expect(
+      calls[0]![1].includes("youtube:player_client=mweb;fetch_pot=always"),
+    ).toBe(enabled);
+    expect(
+      calls[1]![1].includes("youtube:player_client=mweb;fetch_pot=always"),
+    ).toBe(enabled);
     expect(calls[0]![1].includes("--no-plugin-dirs")).toBe(!enabled);
     expect(vi.mocked(decode)).toHaveBeenCalledWith(
       expect.any(PassThrough),
