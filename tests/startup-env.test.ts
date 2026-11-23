@@ -26,6 +26,8 @@ const keys = [
   "COMMAND_TTL_MS",
   "BOT_IDLE_MS",
   "AUTO_STOP_ENABLED",
+  "AUTO_STOP_IDLE_MS",
+  "AUTO_STOP_IDLE_MS",
   "AUTO_STOP_COORDINATED",
 ];
 afterEach(() => {
@@ -51,6 +53,8 @@ it("loads the ECS configuration with only the reported three variables", async (
   expect(config.ecsCluster).toBe("");
   expect(config.ecsService).toBe("");
   expect(config.autoStop).toBe(false);
+  expect(config.autoStopIdleMs).toBe(60000);
+  expect(config.autoStopIdleMs).toBe(60000);
   expect(config.mode).toBe("external");
   expect(config.ttsUrl).toBe("http://127.0.0.1:50021");
 });

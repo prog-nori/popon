@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
 import {
   SQSClient,
@@ -20,6 +20,7 @@ export interface CommandConsumerOptions {
   handle: (command: QueuedCommand) => Promise<void>;
   activity?: () => void;
   onEmpty?: () => Promise<void>;
+  canReceive?: () => boolean;
   now?: () => number;
 }
 
@@ -28,12 +29,24 @@ export class CommandConsumer {
   private seen = new Map<string, number>();
   private task?: Promise<void>;
   private processing = false;
+  private unacknowledged = new Set<string>();
   constructor(
     private client: SQSClient,
     private options: CommandConsumerOptions,
   ) {}
   get isProcessing(): boolean {
     return this.processing;
+  }
+  get hasUnacknowledged(): boolean {
+    return this.unacknowledged.size > 0;
+  }
+  private key(message: Message): string {
+    return (
+      message.MessageId ??
+      createHash("sha256")
+        .update(message.Body ?? message.ReceiptHandle ?? "")
+        .digest("hex")
+    );
   }
   start(): Promise<void> {
     this.task ??= this.run();
@@ -49,6 +62,7 @@ export class CommandConsumer {
   /** Public for deterministic tests; normal callers use start(). */
   async process(message: Message): Promise<void> {
     if (this.abort.signal.aborted || !message.ReceiptHandle) return;
+    this.unacknowledged.add(this.key(message));
     this.processing = true;
     let heartbeat: ReturnType<typeof setInterval> | undefined;
     let renewing = false;
@@ -72,11 +86,18 @@ export class CommandConsumer {
         return;
       }
       if (this.seen.has(command.id)) {
+        log("command_duplicate", { id: command.id });
         await this.remove(message);
         return;
       }
       // Do not evict still-live deduplication records under load.
       if (this.seen.size >= 10000) throw new Error("command_dedup_capacity");
+      const fields = {
+        id: command.id,
+        guildId: command.guildId,
+        command: command.name,
+      };
+      log("command_received", fields);
       this.options.activity?.();
       heartbeat = setInterval(() => {
         if (renewing || this.abort.signal.aborted) return;
@@ -100,12 +121,23 @@ export class CommandConsumer {
       try {
         await this.options.handle(command);
       } catch (error) {
-        if (!(error instanceof InvalidCommand)) throw error;
+        if (!(error instanceof InvalidCommand)) {
+          // Never include AWS/Discord exception messages or the queued payload.
+          log("command_retry_pending", fields);
+          throw error;
+        }
         log("command_rejected", { id: command.id, reason: error.message });
       }
       // Record acceptance before deleting: delete failures cannot replay side effects.
       this.seen.set(command.id, command.createdAt * 1000 + this.options.ttlMs);
-      await this.remove(message);
+      // Acceptance means handed to the existing handler, not completed VC/media.
+      log("command_handled", fields);
+      try {
+        await this.remove(message);
+      } catch (error) {
+        log("command_delete_failed", { id: command.id });
+        throw error;
+      }
     } finally {
       clearInterval(heartbeat);
       this.processing = false;
@@ -120,10 +152,14 @@ export class CommandConsumer {
       }),
       { abortSignal: this.signal() },
     );
+    this.unacknowledged.delete(this.key(message));
   }
   private async run(): Promise<void> {
     let failures = 0;
-    while (!this.abort.signal.aborted) {
+    while (
+      !this.abort.signal.aborted &&
+      this.options.canReceive?.() !== false
+    ) {
       try {
         const response = await this.client.send(
           new ReceiveMessageCommand({

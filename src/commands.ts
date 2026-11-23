@@ -21,9 +21,13 @@ export interface CommandContext {
   guildId: string;
   guild: Guild;
   voiceChannel: VoiceBasedChannel | null;
+  /** SQS callers resolve the user's latest voice state again after preparation. */
+  userId?: string;
+  expiresAt?: number;
   url?: string;
   reply: (message: CommandReply) => Promise<unknown>;
   backgroundJoin?: boolean;
+  notificationsSucceeded?: () => boolean;
 }
 
 export interface QueuedCommand {

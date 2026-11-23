@@ -18,6 +18,16 @@ export function serviceScaler(
   };
 }
 
+/** The automatic stop path can only scale to zero. */
+export function serviceStopper(
+  region: string,
+  cluster: string,
+  service: string,
+) {
+  const scale = serviceScaler(region, cluster, service);
+  return () => scale(0);
+}
+
 export async function queueAppearsEmpty(
   sqs: SQSClient,
   queueUrl: string,

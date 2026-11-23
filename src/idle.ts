@@ -1,95 +1,83 @@
 import { log } from "./log.js";
 
-export interface IdleOptions {
+export type StopReason = "leave" | "voice_empty";
+interface Candidate {
+  reason: StopReason;
+  guildId: string;
+  valid: () => boolean;
+}
+export interface AutoStopOptions {
   enabled: boolean;
-  coordinated: boolean;
-  idleMs: number;
-  busy: () => boolean;
+  safe: () => boolean;
   queueEmpty: () => Promise<boolean>;
-  scale: (count: number) => Promise<void>;
-  stopped: () => void;
-  now?: () => number;
+  stop: () => Promise<void>;
 }
 
-/**
- * Local checks reduce races; they cannot atomically fence an external Lambda's
- * UpdateService call. Refuse automatic scale-in without external coordination.
- */
-export class IdleStopper {
-  private lastActivity: number;
+/** Invoked only after a real empty SQS poll. Checks reduce, not eliminate, races. */
+export class AutoStopper {
+  private candidate?: Candidate;
   private epoch = 0;
-  private wasBusy = false;
-  private closed = false;
   private checking = false;
-  private reported = false;
-  constructor(private options: IdleOptions) {
-    this.lastActivity = this.now();
+  private committing = false;
+  private requested = false;
+  constructor(private options: AutoStopOptions) {}
+  get isStopping(): boolean {
+    return this.committing || this.requested;
   }
-  private now(): number {
-    return this.options.now?.() ?? Date.now();
-  }
-  touch(): void {
-    this.lastActivity = this.now();
+  request(reason: StopReason, guildId: string, valid = () => true): void {
+    if (!this.options.enabled || this.isStopping) return;
     this.epoch++;
+    this.candidate = { reason, guildId, valid };
   }
-  close(): void {
-    this.closed = true;
+  cancel(cause: string): void {
+    this.epoch++;
+    if (this.candidate)
+      log("auto_stop_cancelled", {
+        reason: this.candidate.reason,
+        guildId: this.candidate.guildId,
+        cause,
+        requestInFlight: this.committing,
+      });
+    this.candidate = undefined;
+  }
+  revalidate(): void {
+    if (this.candidate && !this.candidate.valid())
+      this.cancel("condition_changed");
   }
   async check(): Promise<void> {
-    if (this.closed || this.checking || !this.options.enabled) return;
-    if (!this.options.coordinated) {
-      if (!this.reported)
-        log("auto_stop_blocked", { reason: "external_coordination_required" });
-      this.reported = true;
+    const candidate = this.candidate;
+    if (!this.options.enabled || !candidate || this.checking || this.isStopping)
       return;
-    }
-    if (this.options.busy()) {
-      this.wasBusy = true;
-      this.touch();
-      return;
-    }
-    if (this.wasBusy) {
-      this.wasBusy = false;
-      this.touch();
-    }
-    if (this.now() - this.lastActivity < this.options.idleMs) return;
+    const fields = { reason: candidate.reason, guildId: candidate.guildId };
+    const safe = this.options.safe() && candidate.valid();
+    log("auto_stop_condition_checked", { ...fields, safe, phase: "local" });
+    if (!safe) return;
     const epoch = this.epoch;
     this.checking = true;
-    let scalingAttempted = false;
     try {
-      if (!(await this.options.queueEmpty())) {
-        this.touch();
-        return;
-      }
-      if (this.closed || this.options.busy() || epoch !== this.epoch) return;
-      scalingAttempted = true;
-      await this.options.scale(0);
-      if (this.closed) return;
-      // Best effort only. External coordination must cover process termination.
-      if (
-        !(await this.options.queueEmpty()) ||
-        this.options.busy() ||
-        epoch !== this.epoch
-      ) {
-        await this.options.scale(1);
-        this.touch();
-        return;
-      }
-      this.closed = true;
-      log("service_idle_stop_requested");
-      this.options.stopped();
+      // This is additional evidence, not an atomic lock with the Lambda producer.
+      const empty = await this.options.queueEmpty();
+      const unchanged = epoch === this.epoch && candidate === this.candidate;
+      const ready =
+        empty && unchanged && this.options.safe() && candidate.valid();
+      log("auto_stop_condition_checked", {
+        ...fields,
+        safe: ready,
+        phase: "queue",
+      });
+      if (!ready) return;
+      this.committing = true;
+      await this.options.stop();
+      this.requested = true;
+      log("auto_stop_requested", fields);
+      // ECS sends SIGTERM. Do not exit, StopTask, or issue desiredCount=1 here.
+      this.candidate = undefined;
     } catch {
-      if (this.closed) return;
-      if (scalingAttempted) {
-        try {
-          await this.options.scale(1);
-        } catch {
-          log("service_idle_restore_failed");
-        }
-      }
-      this.touch();
-      log("service_idle_stop_failed");
+      // Fail closed and keep the Bot alive. No unbounded stop retries.
+      this.candidate = undefined;
+      log("auto_stop_failed", fields);
     } finally {
+      this.committing = false;
       this.checking = false;
     }
   }
