@@ -1,5 +1,7 @@
 import { EventEmitter } from "node:events";
+import type { Client } from "discord.js";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { createSqsDispatcher } from "../src/sqs-dispatch.js";
 const state = vi.hoisted(() => ({
   events: new Map<string, (...args: unknown[]) => void>(),
   audioConstruct: vi.fn(),
@@ -255,3 +257,46 @@ it.each(["play", "pause", "resume", "skip", "list"])(
     );
   },
 );
+
+it("joins from SQS without waiting for TTS and accepts leave while preparation is pending", async () => {
+  state.acquire.mockReturnValue(new Promise(() => {}));
+  const send = vi.fn(async () => {});
+  const guild = {
+    id: "guild",
+    available: true,
+    voiceAdapterCreator: {},
+    voiceStates: {
+      cache: new Map([["user", { channel: { id: "vc", type: 2 } }]]),
+    },
+  };
+  const client = {
+    isReady: () => true,
+    guilds: { cache: new Map([["guild", guild]]) },
+    channels: {
+      fetch: async () => ({ guildId: "guild", isSendable: () => true, send }),
+    },
+  } as unknown as Client;
+  const { executeCommand } = await import("../src/index.js");
+  const dispatch = createSqsDispatcher(client, executeCommand);
+  const command = {
+    id: "id",
+    guildId: "guild",
+    userId: "user",
+    channelId: "text-channel",
+    name: "join" as const,
+    createdAt: Date.now() / 1000,
+  };
+  await dispatch(command);
+  await tick();
+  expect(state.audioConstruct).toHaveBeenCalledOnce();
+  expect(state.acquire).toHaveBeenCalledWith();
+  await dispatch({ ...command, id: "leave-id", name: "leave" });
+  await tick();
+  expect(connection.destroy).toHaveBeenCalledOnce();
+  expect(send).toHaveBeenCalledWith(
+    expect.objectContaining({ content: expect.stringContaining("退出") }),
+  );
+  expect(send).toHaveBeenCalledWith(
+    expect.objectContaining({ content: expect.stringContaining("中止") }),
+  );
+});

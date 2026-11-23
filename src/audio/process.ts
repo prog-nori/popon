@@ -1,13 +1,23 @@
 import { spawn } from "node:child_process";
 import { PassThrough, Readable } from "node:stream";
+import {
+  classifyProcessFailure,
+  ProcessFailure,
+  type MediaStage,
+} from "./failure.js";
 
 // Each process is owned by a track. No shell, bounded stderr, forced kill fallback.
 export function command(
   executable: string,
   args: string[],
   signal: AbortSignal,
+  context: { stage: MediaStage; tool: "yt-dlp" | "ffmpeg" | "process" } = {
+    stage: "process",
+    tool: "process",
+  },
 ) {
   signal.throwIfAborted();
+  const started = Date.now();
   const child = spawn(executable, args, {
     stdio: ["pipe", "pipe", "pipe"],
     shell: false,
@@ -39,15 +49,43 @@ export function command(
   child.stdin.on("error", () => {});
   child.stdout.on("error", () => {});
   const done = new Promise<void>((resolve, reject) => {
-    child.once("error", reject);
-    child.once("close", (code) => {
+    child.once("error", (error: NodeJS.ErrnoException) =>
+      reject(
+        new ProcessFailure({
+          ...context,
+          exitCode: null,
+          signal: null,
+          elapsedMs: Date.now() - started,
+          classification:
+            error.code === "ENOENT"
+              ? "missing_executable"
+              : error.code === "EACCES"
+                ? "permission_denied"
+                : "process_exit",
+        }),
+      ),
+    );
+    child.once("close", (code, terminationSignal) => {
       clearTimeout(killTimer);
       if (process.platform !== "win32") kill("SIGKILL");
       signal.removeEventListener("abort", stop);
       if (code === 0 && !signal.aborted) resolve();
       else
         reject(
-          new Error(`${executable} の処理に失敗しました (${code}): ${stderr}`),
+          new ProcessFailure({
+            ...context,
+            exitCode: code,
+            signal: terminationSignal,
+            elapsedMs: Date.now() - started,
+            classification: signal.aborted
+              ? signal.reason instanceof Error &&
+                signal.reason.name === "TimeoutError"
+                ? "timeout"
+                : "cancelled"
+              : terminationSignal
+                ? "killed"
+                : classifyProcessFailure(stderr),
+          }),
         );
     });
   });
@@ -77,6 +115,7 @@ export function decode(input: Buffer | string | Readable, signal: AbortSignal) {
       "pipe:1",
     ],
     signal,
+    { stage: "decode", tool: "ffmpeg" },
   );
   if (typeof input !== "string") {
     const source = Buffer.isBuffer(input) ? Readable.from(input) : input;

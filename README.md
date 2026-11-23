@@ -16,7 +16,9 @@ DiscordのVC付属チャットを読み上げながら、YouTube動画の音声�
 | `/pause` | 動画を一時停止（読み上げは継続） |
 | `/resume` | 一時停止した動画を再開 |
 | `/skip` | 現在の動画を破棄して次へ |
+| `/stop` | 音楽と再生待ちを停止（VC参加・読み上げは継続） |
 | `/list` | 再生中の動画と再生待ち最大20件をタイトル付きリンクで表示 |
+| `/queue` | `/list` と同じ再生リストを表示 |
 | `/help` | 日本語の使い方を表示 |
 
 通常のVCに参加して `/join` を実行し、準備完了後にVC付属チャットへ投稿してください。動画操作はBotと同じVCから実行します。
@@ -55,6 +57,8 @@ npm run build
 - [設定ガイド](docs/configuration.md)：Discord設定、環境変数、外部コマンド
 - [内部構成](docs/architecture.md)：音声処理、キュー、リソース管理
 - [運用・デプロイ](docs/operations.md)
+- [AWS Fargate / SQSへの配置](docs/aws-fargate.md)：環境変数、IAM、VOICEVOX、Lambdaとの接続、検証と停止の制約
+- [音楽取得・デコードの診断](docs/media-diagnostics.md)：CloudWatchなしの診断コード、指定URLのDocker再現、Fargateとの比較
 - [検証記録](docs/validation.md)・[VOICEVOXのメモリ測定](docs/benchmarks/README.md)
 
 音声合成：**VOICEVOX:ずんだもん**（既定話者）。利用条件・クレジットは[利用ガイド](docs/usage.md#利用条件とクレジット)を確認してください。

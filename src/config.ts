@@ -21,6 +21,17 @@ export const config = {
   autoLeaveMs: number("AUTO_LEAVE_MS", 60000),
   sound: process.env.READY_SOUND_PATH ?? "assets/sounds/meet_style.wav",
   dictionary: process.env.DICTIONARY_PATH ?? "assets/dictionary.json",
+  sqsQueueUrl: process.env.SQS_QUEUE_URL ?? "",
+  awsRegion:
+    process.env.AWS_REGION ??
+    process.env.AWS_DEFAULT_REGION ??
+    "ap-northeast-1",
+  commandTtlMs: number("COMMAND_TTL_MS", 300000, 1000),
+  botIdleMs: number("BOT_IDLE_MS", 300000, 1000),
+  autoStop: process.env.AUTO_STOP_ENABLED === "true",
+  stopCoordinated: process.env.AUTO_STOP_COORDINATED === "true",
+  ecsCluster: process.env.ECS_CLUSTER ?? "",
+  ecsService: process.env.ECS_SERVICE ?? "",
 };
 if (!["external", "process"].includes(config.mode))
   throw new Error("TTS_MODE は external または process を指定してください");
